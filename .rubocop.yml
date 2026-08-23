@@ -1,0 +1,65 @@
+AllCops:
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - '**/bin/*'
+
+Gemspec:
+  Severity: error
+Layout:
+  Severity: error
+Lint:
+  Severity: error
+Lint/UnderscorePrefixedVariableName:
+  Enabled: false
+# A keyword argument's name is part of the signature. A test fake mirroring a
+# real collaborator has to accept `username:` whether or not it reads it, and
+# the suggested `_username:` would rename the keyword and break every call.
+Lint/UnusedBlockArgument:
+  AllowUnusedKeywordArguments: true
+Lint/UnusedMethodArgument:
+  AllowUnusedKeywordArguments: true
+Metrics:
+  Severity: error
+# ABC counts assignments, branches and conditions, so a method that builds a
+# twelve-field panel or prints a status report scores like a complex one while
+# being a flat list of calls. Dashboard#header_lines is the worst at 51 and has
+# no branch in it.
+Metrics/AbcSize:
+  Enabled: false
+# Raised rather than disabled: these count decisions, so a jump still means a
+# method grew a shape worth looking at. The highest today is 10.
+Metrics/CyclomaticComplexity:
+  Max: 12
+Metrics/PerceivedComplexity:
+  Max: 12
+Metrics/ClassLength:
+  Max: 300
+Metrics/ModuleLength:
+  Max: 300
+  CountAsOne: ['heredoc']
+Metrics/MethodLength:
+  Max: 30
+  CountAsOne: ['heredoc']
+Metrics/ParameterLists:
+  Max: 10
+Naming:
+  Severity: error
+Naming/PredicateMethod:
+  Enabled: false
+Naming/VariableNumber:
+  Enabled: false
+Security:
+  Severity: error
+Style:
+  Severity: error
+Style/Documentation:
+  Exclude:
+    # "SignerTest tests Signer" is not documentation.
+    - '**/test/**/*.rb'
+Style/NegatedIf:
+  Enabled: false
+Style/Not:
+  Enabled: false
+Style/FormatStringToken:
+  Enabled: false

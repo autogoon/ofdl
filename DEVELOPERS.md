@@ -1,0 +1,314 @@
+# Developing ofdl-rb
+
+How ofdl works inside: the pipeline, the terminal drawing, and how it gets past
+Cloudflare. For installing, running and configuring it, see
+[README.md](./README.md).
+
+## Tests
+
+```sh
+rake test
+```
+
+All offline - Nothing in the suite contacts OnlyFans, and no captured request is
+committed to it.
+
+## Tooling
+
+ofdl has no runtime dependencies; `ofdl.gemspec` declares none. Everything below
+is development only.
+
+```sh
+bundle install
+npm install
+```
+
+```sh
+bundle exec rubocop -a   # Ruby
+npm run format           # markdown and JSON
+```
+
+Both are version-pinned. `.rubocop.yml` sets `NewCops: enable`, so an unpinned
+rubocop enables cops the config was never written against and a clean checkout
+reports offences nobody introduced.
+
+`.prettierrc` sets `proseWrap: always`: prose hard-wraps at 80, so editing one
+sentence does not reflow the paragraph into the diff.
+
+`.vscode/settings.json` sets `formatOnSave` per language — ruby through ruby-lsp
+with rubocop, markdown and JSON through Prettier — rather than globally, so no
+file is handed to a formatter this repo has no config for.
+
+## What this repo must not contain
+
+This repo is public. What it archives is not: no creator username, account or
+media ID, subscription count, real `output_dir`, or capture still carrying a
+live session belongs in a commit, a test fixture, a commit message or a PR
+description. Naming OnlyFans is the point of the project; naming an account is
+not.
+
+`/personal-check` enforces that. It scans a branch — every revision of every
+file it changed, not just the final diff — plus commit messages and any open
+PR's title and comments, and for each finding works out whether it is already in
+git history and what removing it would take.
+
+The rules it enforces are in
+[`.claude/skills/personal-check/SKILL.md`](./.claude/skills/personal-check/SKILL.md);
+when to run it is in [CLAUDE.md](./CLAUDE.md).
+
+## Enumeration and downloading run together
+
+Listing is the slow half. It's paced at a couple of requests a second and a
+large timeline runs to hundreds of pages, so walking every source to the end
+before fetching anything would waste most of the run. Instead the producer
+pushes each item onto a bounded queue and the download pool takes from it, and
+the first file lands while the second page is still being listed.
+
+There's one queue and one pool for the whole run, not one per creator. That
+means the producer crosses a creator boundary without waiting for that creator's
+downloads to finish, so a worker can be fetching for a creator the producer has
+already moved past. That's why the username travels on the queue next to its
+item, and why every log line and panel row names its creator.
+
+`QUEUE_DEPTH` in `Session` bounds the queue at 256, and the bound is there for
+backpressure, not capacity. The producer is paced only by `requests_per_second`
+and yields a page at a time, so with an unbounded queue it would run to the end
+of every source while the pool trickles along behind it. Memory would scale with
+the size of the library instead of with concurrency, and `queued` would show the
+whole timeline rather than what's actually waiting.
+
+It also caps the listing a run does that it never uses. Once the queue is full
+the producer blocks, so a run stopped with Ctrl-C has listed at most 256 items
+beyond what it downloaded, rather than having raced to the end of every source
+first. That is a real saving in requests, but only for a run that doesn't finish
+— a completed run lists exactly the same pages either way.
+
+The bound doesn't slow the request rate down. Every API call goes through one
+`RateLimiter` on the `Client`, so `requests_per_second` is what decides how fast
+ofdl talks to OnlyFans and therefore how the traffic looks to them. The queue
+bound only decides how far ahead of the downloads the listing is allowed to get.
+
+The producer also does the deduplication — the same media often appears in both
+a timeline and the paid feed, and the first sighting wins — and the check for
+what is already on disk. Both have to happen there: `queued` should only count
+work that will actually be done, or a re-run puts the entire library through the
+queue.
+
+There's no "N items to download" headline, because nothing knows the total until
+the last page has been listed.
+
+## output_dir is never created
+
+If `output_dir` does not exist, the run stops:
+
+```text
+error: output_dir /tmp/ofdl does not exist and will not be created (nearest existing path: /tmp). If it lives on a network volume, mount it first.
+```
+
+If it were created on demand, an unmounted volume would send the whole run to
+the boot disk instead. Then the moment the real volume mounts, that directory is
+shadowed and the downloads vanish. Naming the nearest existing path is what
+tells you it's an unmounted share rather than a typo.
+
+The check runs before every file is written, not once at startup, so a volume
+that disappears mid-run fails loudly instead of quietly reappearing on the boot
+disk. Directories _below_ a verified root are created normally.
+
+## Downloads land locally first
+
+curl writes into a scratch directory under `$TMPDIR` (`/var/folders/...` on
+macOS), and the finished file is copied into `output_dir` in one go.
+
+When `output_dir` is a mounted share, writing a file incrementally is slow and
+watching its progress costs a network round trip every time, because the
+attribute cache is invalid the moment the file is written to. Polling four
+in-flight downloads ten times a second is enough to drop the dashboard to about
+one frame a second. In scratch a `stat()` costs a microsecond.
+
+The copy stages as `<name>.part` **in the destination directory** and renames it
+there. A rename within one filesystem is atomic, so a file sitting under its
+final name is always complete; see `Scratch#publish`.
+
+Scratch is one directory per run, removed when the run ends and on Ctrl-C.
+
+## How the dashboard is drawn
+
+What the panels show is in [README.md](./README.md#the-dashboard); this is how
+they stay on screen.
+
+DECSTBM holds the zones in place — `\e[{top};{bottom}r` tells the terminal that
+only those rows scroll. The log keeps its eight rows in any window and the image
+zone absorbs the difference.
+
+Every filesystem read happens on a sampler thread, never on the thread that
+draws. `test_rendering_touches_no_files` counts the dashboard's filesystem reads
+during a render and fails if there are any.
+
+`Stats#active` is keyed by worker slot rather than by download key, so a row
+never moves as transfers come and go: row 2 is always worker 2.
+
+Once the bytes have arrived the bar gives way to the phase, `rendering` and then
+`moving`. A bar sitting at 100% tells you nothing about the copy still running
+behind it, and where `output_dir` is a mounted share that copy is the slow part.
+
+The producer bumps `creators_done` as it finishes listing each creator, rather
+than the pool bumping it as downloads finish, which is why the field can reach
+its total while transfers are still running. `Stats#throughput` is
+`bytes / elapsed` across the whole run, so `rate` is cumulative and not
+instantaneous.
+
+A download is retried up to `Downloader::MAX_ATTEMPTS` times, and only when the
+error says it's retryable; anything else fails on the first attempt.
+`Session#consume` catches every other `StandardError` too, so a bug in a worker
+costs one item instead of quietly taking a worker out of the pool.
+
+### Image previews
+
+Each worker owns a vertical slice of the image zone and draws into it directly,
+from its own download thread, as soon as the bytes arrive and before the copy to
+`output_dir` starts. There's no shared "latest image", no queue and no throttle,
+so there's no state for two workers to race over.
+
+It's drawn with iTerm2's inline image protocol, read from the local scratch copy
+rather than pulled back across the network.
+
+Images go through `sips` first. It's a **cover** rather than a fit: the picture
+is scaled until it covers the slice and the overflow is cropped, so the slice is
+filled and nothing is letterboxed. Which axis to scale on depends on the
+picture. One wider than the slice is scaled to its height and cropped
+horizontally, a narrower one the other way round. The result already has the
+slice's shape, so it's drawn with aspect correction off and fills the cells
+exactly.
+
+The target size comes from the terminal rather than a guess: iTerm2 fills in the
+pixel fields of `struct winsize`, so `TIOCGWINSZ` gives the exact cell size and
+follows the font size and display as they change. Then it's halved:
+
+```
+terminal 200x50, cells 8x16  ->  slice 50 cells x 30 rows
+                             ->  200x240 after halving, ~20 KB, ~70ms
+```
+
+Drawing blanks the slice and then fills it, and the terminal only paints that as
+one frame if the whole sequence arrives inside its synchronized-output window
+(DECSET 2026). At full size the payload outruns that window, so the blank gets
+painted on its own and the preview flashes black. Half resolution undersamples a
+little — you can't see it at this size — and keeps the redraw inside one frame.
+
+If the resize fails, nothing is drawn at all. The original hasn't been cropped
+to the slice, so it would letterbox or stretch, and a missing preview costs
+nothing.
+
+`sips` rather than an image library because it ships with macOS: no native
+build, no ImageMagick. It costs about 70ms, on a worker thread that's about to
+spend a lot longer than that copying the original to `output_dir`.
+
+## Signing rules
+
+The signing parameters are cached in `~/.ofdl-config.json` under `rules`,
+written there on first fetch:
+
+```json
+"rules": {
+  "static_param": "STATIC",
+  "prefix": "ABC",
+  "suffix": "XYZ",
+  "checksum_constant": 1000,
+  "checksum_indexes": [0, 5, 9],
+  "fetched_at": "2026-08-23T00:00:00Z"
+}
+```
+
+There's no expiry. These values only matter when they stop working, so a
+rejected request is what triggers a refetch, not a clock. On the first HTTP
+400/401/403 the rules are refetched, written back to the config, and the request
+is retried once. If it's rejected again the run stops and says so — at that
+point the problem is the session or the algorithm, not the cache.
+
+That refresh happens at most once per run, so an expired session can't turn into
+a refetch storm.
+
+## Transport
+
+OnlyFans sits behind Cloudflare, which fingerprints a lot more than headers.
+Ruby's `Net::HTTP` fails every check at once: HTTP/1.1 rather than h2,
+Title-Cased header names where h2 wants lowercase, an
+`Accept-Encoding: gzip;q=1.0,deflate;q=0.6,identity;q=0.3` that no browser has
+ever sent, and an OpenSSL TLS fingerprint that isn't Chrome's.
+
+Signatures verified byte-identical against seven live browser requests still
+came back `HTTP 400` with an empty body. That empty body is what puts the
+rejection at the edge — a signature OnlyFans itself rejects comes back with
+`{"error":{...}}` attached.
+
+So every request, API calls and media downloads alike, goes through
+`curl-impersonate`, which reproduces Chrome's BoringSSL stack, h2 settings,
+header order and casing.
+
+### Profile and User-Agent are chosen separately
+
+```
+impersonation profile : chrome150   <- newest curl-impersonate offers
+reported browser      : Chrome 151  <- the installed Chrome's major version
+```
+
+The profile supplies the fingerprint, so the newest one is closest to a current
+browser. The `User-Agent` reports the Chrome that owns the session cookies.
+curl-impersonate trails Chrome's release cadence by a major or two, so these
+routinely disagree, and that's fine: Cloudflare fingerprints TLS and header
+shape, while OnlyFans — if it checks anything — checks the User-Agent.
+
+Chrome's UA has been _reduced_ for years (platform frozen at `10_15_7` even on
+Apple silicon, minor/build/patch always `0.0.0`), so the major version out of
+the app bundle rebuilds it exactly. There's no setting for it.
+
+Available profiles are read from the wrappers beside the binary and then
+confirmed against curl itself with a `file://` URL, so checking a target costs
+no network request and can't touch OnlyFans.
+
+### Fetch metadata is corrected
+
+curl-impersonate's Chrome profile is a _document navigation_:
+`sec-fetch-mode: navigate`, `sec-fetch-dest: document`,
+`upgrade-insecure-requests: 1`, and an `Accept:` of `text/html,...`. API calls
+are XHR, so `accept` becomes `application/json, text/plain, */*`,
+`sec-fetch-mode`/`-dest`/`-site` become `cors`/`empty`/`same-origin`,
+`priority: u=1, i` and `referer: https://onlyfans.com/` are added, and
+`upgrade-insecure-requests` is passed an empty value — how curl is told to drop
+a header it would otherwise set itself.
+
+Media downloads are left alone. They're unauthenticated CloudFront URLs, and a
+plain browser file GET is exactly what curl's defaults already produce.
+
+## x-of-rev and x-hash
+
+Two headers the web client sends on every `/api2/v2` call that aren't part of
+the signature. From its bundle:
+
+```js
+t["x-of-rev"] = "202608211829-e25f858429";
+const { hash: r } = G.A.state.hash;
+r && (t["x-hash"] = r);
+```
+
+**`x-of-rev`** is the front-end build revision. It's a literal in each build and
+appears in every asset URL on the page, so ofdl reads it back out of
+`https://onlyfans.com/` once per run instead of pinning it here. A pinned value
+would go stale on the next OnlyFans deploy.
+
+**`x-hash`** comes from a CDN endpoint the client calls with
+`withCredentials: false`, cached for ten seconds — the same window the browser
+uses:
+
+```text
+GET https://cdn2.onlyfans.com/hash/?u=<auth_id>
+-> HASHVALUE...    (text/plain)
+```
+
+Neither request carries cookies. If the hash fetch fails the header is omitted
+and the run continues, matching the client, which only sets it when the value is
+truthy.
+
+One header still differs from the local browser: `accept-language` is whatever
+curl-impersonate compiles in (`en-US,en;q=0.9`), not what the installed Chrome
+is configured to send.

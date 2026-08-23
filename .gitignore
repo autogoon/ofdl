@@ -1,0 +1,3 @@
+.ruby-lsp
+node_modules
+*.gem

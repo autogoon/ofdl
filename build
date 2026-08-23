@@ -1,0 +1,2 @@
+#!/bin/sh
+gem build ofdl.gemspec && gem install ofdl-0.1.0.gem

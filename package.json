@@ -1,0 +1,12 @@
+{
+  "name": "ofdl-rb",
+  "private": true,
+  "description": "Tooling only. ofdl is Ruby and ships no JavaScript; this pins the formatter for the markdown and JSON in the repo.",
+  "devDependencies": {
+    "prettier": "^3.9.4"
+  },
+  "scripts": {
+    "format": "prettier --write \"**/*.md\" \"*.json\" \".vscode/*.json\"",
+    "format:check": "prettier --check \"**/*.md\" \"*.json\" \".vscode/*.json\""
+  }
+}
