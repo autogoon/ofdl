@@ -24,8 +24,8 @@ module OFDL
 
       assert_equal(1, subject.downloaded)
       assert_equal(100, subject.bytes)
-      # See Stats#record for why the statuses cross over.
-      assert_equal(1, subject.on_disk)
+      # A :skipped outcome is already counted by the walk; see Stats#record.
+      assert_equal(0, subject.on_disk)
       assert_equal(1, subject.skipped)
       assert_equal(1, subject.failed)
     end

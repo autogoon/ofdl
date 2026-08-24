@@ -91,9 +91,10 @@ module OFDL
     def record(outcome)
       case outcome.status
       when :downloaded then bump(:downloaded).bump(:bytes, outcome.bytes)
-      # An Outcome's :skipped means "already present" and :protected means DRM.
-      # The panel calls those "on disk" and "skipped", so the counters do too.
-      when :skipped then bump(:on_disk)
+      # An Outcome's :protected means DRM, which the panel calls "skipped". A
+      # :skipped outcome -- the file was already there -- bumps nothing: the
+      # walk counted that file into `on_disk` before the producer was allowed
+      # to list its creator; see Session#count_library.
       when :protected then bump(:skipped)
       when :failed then bump(:failed)
       end
