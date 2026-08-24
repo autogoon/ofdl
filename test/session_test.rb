@@ -64,16 +64,13 @@ module OFDL
       Timeout.timeout(5) { sleep(0.001) until session.stats.source == 'waiting for listing' }
     end
 
-    FakeLibrary = Struct.new(:noop) do
-      def have?(_item, username:) = false
-
-      def size_of(_item, username:) = 0
-
-      def sanitise(name) = name.to_s
-
-      def tally(on_creator: nil) = [0, 0]
-
-      def path_for(item, username:) = "/tmp/#{username}/#{item.filename}"
+    # The real Library over a root that does not exist: nothing is present and
+    # there is nothing to walk, so every method the producer calls is the real
+    # one and a change to Library is felt here rather than duplicated.
+    class FakeLibrary < Library
+      def initialize
+        super(root: Pathname('/nonexistent'), log: Logging.new(io: StringIO.new, level: :error, colour: false))
+      end
     end
 
     class SignallingDownloader
