@@ -135,6 +135,12 @@ module OFDL
       end
     end
 
+    # The order Library#tally walks the tree in. Taking the creators in that
+    # order is what makes wait_for_count almost always free: the walk is ahead
+    # of the listing from the first creator, and stays ahead. Public because
+    # the CLI announces the run in this order before archive starts.
+    def in_walk_order(targets) = targets.sort_by { library.walk_key(it[:username]) }
+
     def archive(targets:, sources: @config.sources, since: nil)
       queue = SizedQueue.new(QUEUE_DEPTH)
       summary = Summary.empty
@@ -251,11 +257,6 @@ module OFDL
       queue.close
     end
 
-    # The order Library#tally walks the tree in. Taking the creators in that
-    # order is what makes the wait below almost always free: the walk is ahead
-    # of the listing from the first creator, and stays ahead.
-    def in_walk_order(targets) = targets.sort_by { library.sanitise(it[:username]) }
-
     # A creator is listed only once the walk has passed it, so nothing is
     # downloaded into a directory the count has still to read.
     #
@@ -263,7 +264,7 @@ module OFDL
     # is held up by the disk, and it is the producer that is waiting, not the
     # whole run -- the pool keeps draining whatever is already queued.
     def wait_for_count(username)
-      name = library.sanitise(username)
+      name = library.walk_key(username)
       return if counted.passed?(name)
 
       @stats.scanning(creator: username, source: 'waiting for listing')

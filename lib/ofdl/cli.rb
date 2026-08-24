@@ -187,7 +187,7 @@ module OFDL
       @log.step('resolving subscriptions')
       session.stats.scanning(creator: nil, source: 'subscriptions')
 
-      targets = resolve_targets(argv)
+      targets = session.in_walk_order(resolve_targets(argv))
       raise ConfigError, 'no active subscriptions' if targets.empty?
 
       @log.info("  #{targets.size} to archive: #{targets.map { it[:username] }.join(', ')}")

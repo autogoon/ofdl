@@ -63,25 +63,20 @@ module OFDL
     # Each file is yielded as it is read, so a counter fed from here climbs
     # while the tree is walked rather than stepping once per directory.
     #
-    # Creators are walked in directory-name order and `on_creator` is called
-    # with each name as it is finished, so a caller running alongside this can
-    # start on a creator the walk has passed. Session#produce is that caller,
-    # and orders its targets the same way.
-    def tally(on_creator: nil)
+    # Creators are walked in `walk_key` order and `on_creator` is called with
+    # each key as it is finished, so a caller running alongside this can start
+    # on a creator the walk has passed. Session#produce is that caller, and
+    # orders its targets by the same key.
+    def tally(on_creator: nil, &progress)
       files = bytes = 0
 
-      creator_dirs.each do |creator|
-        source_dirs(creator).each do |dir|
-          paths = media_files(dir)
-          cache(creator.basename.to_s, dir.basename.to_s) { key_set(paths) }
-          paths.each do |path|
-            size = path.extname == '.drm' ? 0 : path.size
-            files += 1
-            bytes += size
-            yield(1, size) if block_given?
-          end
+      creator_groups.each do |group|
+        group.each do |creator|
+          counted, size = tally_creator(creator, &progress)
+          files += counted
+          bytes += size
         end
-        on_creator&.call(creator.basename.to_s)
+        on_creator&.call(walk_key(group.last.basename.to_s))
       end
 
       [files, bytes]
@@ -133,12 +128,17 @@ module OFDL
       end
     end
 
-    # The directory a username maps to. Public because a caller ordering itself
-    # against `tally`'s walk has to sort by the same key the walk does.
+    # The directory a username maps to.
     def sanitise(name)
       cleaned = name.to_s.gsub(%r{[/\\:\0]}, '_').strip
       cleaned.empty? ? 'unknown' : cleaned
     end
+
+    # The key `tally`'s walk and a caller waiting on it both order by. It folds
+    # case because a case-insensitive filesystem keeps the directory `alice`
+    # after the username became `Alice`, and two keys mean a waiter released
+    # before its directory has been read; see Watermark.
+    def walk_key(name) = sanitise(name).downcase
 
     private
 
@@ -165,7 +165,38 @@ module OFDL
     # <root>/<username>/<source>/, the layout at the top of this class. A
     # directory name is a sanitised username, which is what the cache is keyed
     # by. Sorted, so a walk of the tree has an order others can wait on.
-    def creator_dirs = @root.directory? ? @root.children.select(&:directory?).sort : []
+    def creator_dirs
+      return [] unless @root.directory?
+
+      @root.children.select(&:directory?).sort_by { walk_key(it.basename.to_s) }
+    end
+
+    # Directories sharing a walk key -- `Alice` beside `alice`, which only a
+    # case-sensitive filesystem allows -- form one group, so the key reaches
+    # `on_creator` once every directory under it has been read.
+    def creator_groups
+      creator_dirs.chunk_while { |a, b| walk_key(a.basename.to_s) == walk_key(b.basename.to_s) }
+    end
+
+    # The cache key stays the directory's own name: folding it would share one
+    # key set between `Alice/` and `alice/`, and whether those are one
+    # directory or two is a property of the filesystem this cannot read.
+    def tally_creator(creator)
+      files = bytes = 0
+
+      source_dirs(creator).each do |dir|
+        paths = media_files(dir)
+        cache(creator.basename.to_s, dir.basename.to_s) { key_set(paths) }
+        paths.each do |path|
+          size = path.extname == '.drm' ? 0 : path.size
+          files += 1
+          bytes += size
+          yield(1, size) if block_given?
+        end
+      end
+
+      [files, bytes]
+    end
 
     def source_dirs(creator) = creator.children.select(&:directory?)
 

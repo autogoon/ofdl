@@ -336,6 +336,41 @@ module OFDL
       assert_equal(1, Timeout.timeout(5) { run.value }.downloaded)
     end
 
+    # Public because CLI#resolve announces the run in this order; see
+    # Session#in_walk_order.
+    def test_targets_are_ordered_by_walk_key
+      session = session_with({})
+      session.instance_variable_set(:@library, FakeLibrary.new)
+
+      names = session.in_walk_order([{ id: 2, username: 'Bob' }, { id: 1, username: 'alice' }]).map { it[:username] }
+
+      assert_equal(%w[alice Bob], names)
+    end
+
+    # A username whose case changed leaves its directory under the old
+    # spelling, so both sides fold: `Bob`, which sorts between `Alice` and
+    # `alice`, must not release the wait. See Library#walk_key.
+    def test_the_wait_is_not_released_by_a_name_between_the_two_spellings
+      session = session_with({ 'posts' => [] })
+      session.instance_variable_set(:@library, FakeLibrary.new)
+      gate = Watermark.new
+      session.instance_variable_set(:@counted, gate)
+
+      run = Thread.new { session.archive(targets: [{ id: 1, username: 'Alice' }], sources: %w[posts]) }
+      await_wait(session)
+
+      gate.pass('Bob')
+
+      assert_nil(run.join(0.05))
+
+      gate.pass('alice')
+
+      assert_equal(0, Timeout.timeout(5) { run.value }.downloaded)
+    ensure
+      gate.finish
+      Timeout.timeout(5) { run&.join }
+    end
+
     # Both sides order by the directory name, or the producer waits on a
     # creator the walk has already gone past; see Session#in_walk_order.
     def test_creators_are_taken_in_the_order_the_walk_uses
