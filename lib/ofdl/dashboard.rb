@@ -149,12 +149,14 @@ module OFDL
       counts = @stats.snapshot
       on_disk = counts[:on_disk] + counts[:downloaded]
       on_disk_bytes = counts[:on_disk_bytes] + counts[:bytes]
+      creators = "#{counts[:creators_done]}/#{counts[:creators_total]}"
+      creators += " #{@stats.creator}" if @stats.creator
 
       [
         box_top(title: 'ofdl', right: Palette.grey("#{fps_label}#{duration(@stats.elapsed)}")),
         *rows_from(
           [
-            field('creators', "#{counts[:creators_done]}/#{counts[:creators_total]} #{@stats.creator}", :cyan),
+            field('creators', creators, :cyan),
             field('scanning', @stats.source || '-', :cyan),
             field('requests', number(counts[:requests])),
             field('discovered', "#{number(counts[:images])} images / #{number(counts[:videos])} videos")

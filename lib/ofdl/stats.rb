@@ -40,10 +40,14 @@ module OFDL
     end
 
     # The producer has walked every source; the pool may still be draining.
-    # Without this the field holds the last source listed, which reads as though
-    # that source were still being scanned for the whole of the drain.
+    # Without this the fields hold the last source and creator listed, which
+    # reads as though that creator were still being scanned for the whole of
+    # the drain -- and the pool is draining work from all of them.
     def done_scanning
-      @mutex.synchronize { @source = 'done' }
+      @mutex.synchronize do
+        @source = 'done'
+        @creator = nil
+      end
       self
     end
 
