@@ -100,6 +100,36 @@ module OFDL
     # A worker can therefore be fetching for a creator other than the one being
     # scanned, so the username travels on the queue beside its item instead of
     # being closed over.
+    # How far the library walk has got, so the producer can wait for one
+    # creator instead of for the whole tree.
+    def counted = @counted ||= Watermark.new.finish
+
+    # `on disk` is a property of the library, not of the listing or of which
+    # subscriptions a run names, so it is read from the tree rather than
+    # accumulated as items are listed.
+    #
+    # It runs on its own thread: the walk is filesystem-bound and the listing it
+    # overlaps is paced at a couple of requests a second, so on a mounted share
+    # it costs no wall clock at all. What keeps that safe is the watermark --
+    # the producer will not list a creator the walk has yet to pass, so no
+    # worker writes into a directory this has still to read, and the panel's
+    # `downloaded` cannot be counted here as well.
+    #
+    # Counting per file rather than per directory keeps the figure climbing at
+    # the dashboard's refresh rate on a large library.
+    #
+    # Returns the thread doing the walk.
+    def count_library
+      @counted = Watermark.new
+      Thread.new do
+        library.tally(on_creator: ->(name) { @counted.pass(name) }) do |files, bytes|
+          @stats.bump(:on_disk, files).bump(:on_disk_bytes, bytes)
+        end
+      ensure
+        @counted.finish
+      end
+    end
+
     def archive(targets:, sources: @config.sources, since: nil)
       queue = SizedQueue.new(QUEUE_DEPTH)
       summary = Summary.empty
@@ -150,14 +180,11 @@ module OFDL
             next if since && item.posted_at < since
             next unless seen.add?(item.key)
 
-            # Decided here rather than in a worker: the producer already knows
-            # what is on disk, and `queued` must count only work that will be
-            # done, or a re-run passes its whole library through the queue.
+            # Decided here rather than in a worker: `queued` must count only
+            # work that will be done, or a re-run passes its whole library
+            # through the queue.
             if present?(item, username)
               present += 1
-              # The only chance to size it: a skipped item is never downloaded.
-              # One stat of a file nobody is writing, on the producer thread.
-              @stats.bump(:on_disk).bump(:on_disk_bytes, library.size_of(item, username:))
               next
             end
 
@@ -208,7 +235,8 @@ module OFDL
     def produce(queue, targets:, sources:, since:)
       seen = Set.new
 
-      targets.each do |target|
+      in_walk_order(targets).each do |target|
+        wait_for_count(target[:username])
         stream(user_id: target[:id], username: target[:username], sources:, since:, seen:) do |item|
           queue << [item, target[:username]]
         end
@@ -216,6 +244,25 @@ module OFDL
       end
     ensure
       queue.close
+    end
+
+    # The order Library#tally walks the tree in. Taking the creators in that
+    # order is what makes the wait below almost always free: the walk is ahead
+    # of the listing from the first creator, and stays ahead.
+    def in_walk_order(targets) = targets.sort_by { library.sanitise(it[:username]) }
+
+    # A creator is listed only once the walk has passed it, so nothing is
+    # downloaded into a directory the count has still to read.
+    #
+    # The field is set only when there is a real wait: seeing it means the run
+    # is held up by the disk, and it is the producer that is waiting, not the
+    # whole run -- the pool keeps draining whatever is already queued.
+    def wait_for_count(username)
+      name = library.sanitise(username)
+      return if counted.passed?(name)
+
+      @stats.scanning(creator: username, source: 'waiting for listing')
+      counted.await(name)
     end
 
     # A download that raises anything other than DownloadError would otherwise

@@ -94,6 +94,24 @@ what is already on disk. Both have to happen there: `queued` should only count
 work that will actually be done, or a re-run puts the entire library through the
 queue.
 
+The panel's `on disk` is not counted there. `Session#count_library` walks the
+output tree on its own thread, started before the subscriptions are resolved, so
+the figure covers the whole library rather than following the producer's
+position, and is the same whichever creators the run names. Those are the same
+per-directory listings `Library#have?` performs lazily, so the producer's checks
+then read a warm cache.
+
+`Watermark` is what makes running that walk alongside the listing safe.
+`Library#tally` walks creators in directory-name order and reports each one as
+it finishes; `Session#produce` orders its targets the same way and waits for the
+walk to pass a creator before listing it. So no worker writes into a directory
+the walk has still to read, which would count that file twice — once in the walk
+and once as `downloaded`. The wait is almost always already satisfied: the walk
+is filesystem-bound, and the listing it races is paced at a couple of requests a
+second. A creator with no directory yet needs no special case, because the walk
+is ordered: a name it has gone past without reporting is a name it does not
+hold.
+
 There's no "N items to download" headline, because nothing knows the total until
 the last page has been listed.
 

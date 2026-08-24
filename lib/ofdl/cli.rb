@@ -165,10 +165,14 @@ module OFDL
       # Resolution runs inside the dashboard: listing subscriptions is several
       # paced API calls, and the screen stays blank until the dashboard starts.
       with_dashboard(options) do |dashboard|
-        targets = resolve(argv, options)
-
         session.library.ensure_root!
         session.library.sweep_partials!
+        # Started here and left running: the walk costs no request, so it
+        # overlaps the subscription lookup and the listing after it. The
+        # producer waits on it a creator at a time; see Session#count_library.
+        session.count_library
+
+        targets = resolve(argv, options)
         session.stats.bump(:creators_total, targets.size)
 
         session.archive(targets:, sources: options[:sources], since: options[:since])

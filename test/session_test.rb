@@ -58,10 +58,20 @@ module OFDL
       items
     end
 
+    # Blocks until the producer is held at the watermark rather than sleeping a
+    # fixed time, so the test is not paced by the machine it runs on.
+    def await_wait(session)
+      Timeout.timeout(5) { sleep(0.001) until session.stats.source == 'waiting for listing' }
+    end
+
     FakeLibrary = Struct.new(:noop) do
       def have?(_item, username:) = false
 
       def size_of(_item, username:) = 0
+
+      def sanitise(name) = name.to_s
+
+      def tally(on_creator: nil) = [0, 0]
 
       def path_for(item, username:) = "/tmp/#{username}/#{item.filename}"
     end
@@ -233,15 +243,71 @@ module OFDL
                                            row(2, 20, '2026-01-14T00:00:00Z')] })
       have = Object.new
       have.define_singleton_method(:have?) { |item, username:| item.media_id == 10 }
-      have.define_singleton_method(:size_of) { |_item, username:| 4096 }
       session.instance_variable_set(:@library, have)
 
       items = collect_from(session, user_id: 1, sources: %w[posts], username: 'creator')
 
       assert_equal([20], items.map(&:media_id))
       assert_equal(1, session.stats.queued)
-      assert_equal(1, session.stats.on_disk)
-      assert_equal(4096, session.stats.on_disk_bytes)
+    end
+
+    # `on disk` comes from the tree, not from what the run lists; see
+    # Session#count_library.
+    def test_the_library_is_counted_without_reference_to_the_run
+      session = session_with({})
+      library = FakeLibrary.new
+      library.define_singleton_method(:tally) do |on_creator: nil, &progress|
+        # Per file rather than per directory, so the panel fills in as it walks.
+        3.times { progress.call(1, 2048) }
+        on_creator.call('alice')
+        [3, 6144]
+      end
+      session.instance_variable_set(:@library, library)
+
+      Timeout.timeout(5) { session.count_library.join }
+
+      assert_equal(3, session.stats.on_disk)
+      assert_equal(6144, session.stats.on_disk_bytes)
+      assert(session.counted.passed?('alice'))
+    end
+
+    # The walk runs alongside the listing, so a creator is held back until the
+    # walk has passed it -- no worker writes into a directory still to be read.
+    def test_a_creator_is_not_listed_until_the_walk_has_passed_it
+      session = session_with({ 'posts' => [row(1, 10, '2026-01-14T00:00:00Z')] })
+      session.instance_variable_set(:@library, FakeLibrary.new)
+      session.instance_variable_set(:@downloader, SignallingDownloader.new(Queue.new))
+      gate = Watermark.new
+      session.instance_variable_set(:@counted, gate)
+
+      run = Thread.new { session.archive(targets: [{ id: 1, username: 'creator' }], sources: %w[posts]) }
+      await_wait(session)
+
+      assert_equal('creator', session.stats.creator)
+      assert_equal(0, session.stats.media)
+
+      gate.pass('creator')
+
+      assert_equal(1, Timeout.timeout(5) { run.value }.downloaded)
+    end
+
+    # Both sides order by the directory name, or the producer waits on a
+    # creator the walk has already gone past; see Session#in_walk_order.
+    def test_creators_are_taken_in_the_order_the_walk_uses
+      session = session_with({ 'posts' => [] })
+      session.instance_variable_set(:@library, FakeLibrary.new)
+      gate = Watermark.new
+      session.instance_variable_set(:@counted, gate)
+
+      run = Thread.new do
+        session.archive(targets: [{ id: 2, username: 'bob' }, { id: 1, username: 'alice' }], sources: %w[posts])
+      end
+      await_wait(session)
+
+      assert_equal('alice', session.stats.creator)
+    ensure
+      gate.finish
+      Timeout.timeout(5) { run&.join }
     end
 
     # Split by OnlyFans' classification, not by the extension -- see Item#still?.
