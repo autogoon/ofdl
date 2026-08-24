@@ -64,16 +64,13 @@ module OFDL
       Timeout.timeout(5) { sleep(0.001) until session.stats.source == 'waiting for listing' }
     end
 
-    FakeLibrary = Struct.new(:noop) do
-      def have?(_item, username:) = false
-
-      def size_of(_item, username:) = 0
-
-      def sanitise(name) = name.to_s
-
-      def tally(on_creator: nil) = [0, 0]
-
-      def path_for(item, username:) = "/tmp/#{username}/#{item.filename}"
+    # The real Library over a root that does not exist: nothing is present and
+    # there is nothing to walk, so every method the producer calls is the real
+    # one and a change to Library is felt here rather than duplicated.
+    class FakeLibrary < Library
+      def initialize
+        super(root: Pathname('/nonexistent'), log: Logging.new(io: StringIO.new, level: :error, colour: false))
+      end
     end
 
     class SignallingDownloader
@@ -271,6 +268,54 @@ module OFDL
       assert(session.counted.passed?('alice'))
     end
 
+    # A file removed between `children` and `size` raises on the walk thread.
+    # Unrescued it reaches Thread.report_on_exception, which writes to the
+    # terminal the dashboard is drawing on.
+    def test_a_failed_walk_leaves_the_producer_free_to_run
+      session = session_with({})
+      library = FakeLibrary.new
+      library.define_singleton_method(:tally) do |on_creator: nil, &_progress|
+        raise Errno::ENOENT, 'alice/1_10.jpg'
+      end
+      session.instance_variable_set(:@library, library)
+
+      Timeout.timeout(5) { session.count_library.join }
+
+      assert(session.counted.passed?('alice'))
+    end
+
+    # See Session#count_library: the thread holds its own reference, so a walk
+    # still running cannot finish the watermark a later call installed.
+    def test_a_running_walk_does_not_finish_a_later_watermark
+      session = session_with({})
+      entered = Queue.new
+      # One gate per walk, handed out in the order the walks reach `tally`, so
+      # releasing the first cannot release the second instead.
+      gates = [Queue.new, Queue.new]
+      order = Mutex.new
+      started = 0
+      library = FakeLibrary.new
+      library.define_singleton_method(:tally) do |on_creator: nil, &_progress|
+        mine = order.synchronize { started += 1 } - 1
+        entered << mine
+        gates[mine].pop
+        [0, 0]
+      end
+      session.instance_variable_set(:@library, library)
+
+      first = session.count_library
+      entered.pop
+      second = session.count_library
+      later = session.counted
+      gates[0] << :go
+      Timeout.timeout(5) { first.join }
+
+      refute(later.passed?('alice'))
+    ensure
+      gates[1] << :go
+      Timeout.timeout(5) { second&.join }
+    end
+
     # The walk runs alongside the listing, so a creator is held back until the
     # walk has passed it -- no worker writes into a directory still to be read.
     def test_a_creator_is_not_listed_until_the_walk_has_passed_it
@@ -289,6 +334,41 @@ module OFDL
       gate.pass('creator')
 
       assert_equal(1, Timeout.timeout(5) { run.value }.downloaded)
+    end
+
+    # Public because CLI#resolve announces the run in this order; see
+    # Session#in_walk_order.
+    def test_targets_are_ordered_by_walk_key
+      session = session_with({})
+      session.instance_variable_set(:@library, FakeLibrary.new)
+
+      names = session.in_walk_order([{ id: 2, username: 'Bob' }, { id: 1, username: 'alice' }]).map { it[:username] }
+
+      assert_equal(%w[alice Bob], names)
+    end
+
+    # A username whose case changed leaves its directory under the old
+    # spelling, so both sides fold: `Bob`, which sorts between `Alice` and
+    # `alice`, must not release the wait. See Library#walk_key.
+    def test_the_wait_is_not_released_by_a_name_between_the_two_spellings
+      session = session_with({ 'posts' => [] })
+      session.instance_variable_set(:@library, FakeLibrary.new)
+      gate = Watermark.new
+      session.instance_variable_set(:@counted, gate)
+
+      run = Thread.new { session.archive(targets: [{ id: 1, username: 'Alice' }], sources: %w[posts]) }
+      await_wait(session)
+
+      gate.pass('Bob')
+
+      assert_nil(run.join(0.05))
+
+      gate.pass('alice')
+
+      assert_equal(0, Timeout.timeout(5) { run.value }.downloaded)
+    ensure
+      gate.finish
+      Timeout.timeout(5) { run&.join }
     end
 
     # Both sides order by the directory name, or the producer waits on a

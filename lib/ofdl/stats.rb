@@ -40,10 +40,14 @@ module OFDL
     end
 
     # The producer has walked every source; the pool may still be draining.
-    # Without this the field holds the last source listed, which reads as though
-    # that source were still being scanned for the whole of the drain.
+    # Without this the fields hold the last source and creator listed, which
+    # reads as though that creator were still being scanned for the whole of
+    # the drain -- and the pool is draining work from all of them.
     def done_scanning
-      @mutex.synchronize { @source = 'done' }
+      @mutex.synchronize do
+        @source = 'done'
+        @creator = nil
+      end
       self
     end
 
@@ -69,8 +73,8 @@ module OFDL
     #
     # `path` is the scratch file: the sampler stats it for live byte progress,
     # which avoids threading a callback down through curl.
-    def begin_download(slot, filename:, path:, total:, headers_path: nil, creator: nil)
-      @mutex.synchronize { @active[slot] = { slot:, filename:, path:, total:, headers_path:, creator: } }
+    def begin_download(slot, filename:, path:, total:, headers_path: nil, creator: nil, source: nil)
+      @mutex.synchronize { @active[slot] = { slot:, filename:, path:, total:, headers_path:, creator:, source: } }
       self
     end
 
@@ -91,9 +95,10 @@ module OFDL
     def record(outcome)
       case outcome.status
       when :downloaded then bump(:downloaded).bump(:bytes, outcome.bytes)
-      # An Outcome's :skipped means "already present" and :protected means DRM.
-      # The panel calls those "on disk" and "skipped", so the counters do too.
-      when :skipped then bump(:on_disk)
+      # An Outcome's :protected means DRM, which the panel calls "skipped". A
+      # :skipped outcome -- the file was already there -- bumps nothing: the
+      # walk counted that file into `on_disk` before the producer was allowed
+      # to list its creator; see Session#count_library.
       when :protected then bump(:skipped)
       when :failed then bump(:failed)
       end

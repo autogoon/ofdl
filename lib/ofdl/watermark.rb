@@ -11,7 +11,7 @@ module OFDL
   # creator with no directory yet be waited on like any other.
   #
   # Both sides must order by the same key, or a waiter is released early. See
-  # Library#tally and Session#produce, which both order by directory name.
+  # Library#tally and Session#produce, which both order by Library#walk_key.
   class Watermark
     def initialize
       @position = nil

@@ -149,12 +149,14 @@ module OFDL
       counts = @stats.snapshot
       on_disk = counts[:on_disk] + counts[:downloaded]
       on_disk_bytes = counts[:on_disk_bytes] + counts[:bytes]
+      creators = "#{counts[:creators_done]}/#{counts[:creators_total]}"
+      creators += " #{@stats.creator}" if @stats.creator
 
       [
         box_top(title: 'ofdl', right: Palette.grey("#{fps_label}#{duration(@stats.elapsed)}")),
         *rows_from(
           [
-            field('creators', "#{counts[:creators_done]}/#{counts[:creators_total]} #{@stats.creator}", :cyan),
+            field('creators', creators, :cyan),
             field('scanning', @stats.source || '-', :cyan),
             field('requests', number(counts[:requests])),
             field('discovered', "#{number(counts[:images])} images / #{number(counts[:videos])} videos")
@@ -222,12 +224,13 @@ module OFDL
       ].join('  ')
     end
 
-    # <creator>/<file>, the library layout. The row carries the creator because
-    # the pool interleaves them: the header names the creator being scanned,
-    # which is ahead of the one this slot is fetching.
+    # <creator>/<source>/<file>, the library layout. The row carries the creator
+    # because the pool interleaves them: the header names the creator being
+    # scanned, which is ahead of the one this slot is fetching.
     def target(entry)
-      file = Palette.cyan(entry[:filename].to_s)
-      entry[:creator] ? "#{Palette.blue(entry[:creator])}/#{file}" : file
+      [entry[:creator] && Palette.blue(entry[:creator]),
+       entry[:source] && Palette.cyan(entry[:source]),
+       Palette.cyan(entry[:filename].to_s)].compact.join('/')
     end
 
     # The bar, or the phase label once Stats#phase has been set. The label is

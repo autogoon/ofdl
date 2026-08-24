@@ -128,14 +128,28 @@ module OFDL
     end
 
     # The producer waits on these names, so they have to arrive in the order it
-    # sorts its targets by; see Session#in_walk_order.
-    def test_tally_reports_each_creator_in_name_order
-      %w[carol alice bob].each { @library.prepare(item, username: it).write('1') }
+    # sorts its targets by, and under the key it sorts them by; see
+    # Session#in_walk_order and Library#walk_key.
+    def test_tally_reports_each_creator_in_walk_key_order
+      %w[Carol alice BOB].each { @library.prepare(item, username: it).write('1') }
 
       seen = []
       @library.tally(on_creator: ->(name) { seen << name })
 
       assert_equal(%w[alice bob carol], seen)
+    end
+
+    # Two directories share a walk key only on a case-sensitive filesystem
+    # (`Alice` beside `alice`), which this suite cannot create on macOS, so the
+    # key is forced. The key arrives once, after every file under it is read.
+    def test_tally_reports_a_shared_walk_key_once_both_directories_are_read
+      %w[one two].each { @library.prepare(item, username: it).write('1') }
+      @library.define_singleton_method(:walk_key) { |_name| 'shared' }
+
+      events = []
+      @library.tally(on_creator: ->(name) { events << name }) { |_files, _bytes| events << :file }
+
+      assert_equal([:file, :file, 'shared'], events)
     end
 
     def test_tally_of_an_empty_library_is_zero

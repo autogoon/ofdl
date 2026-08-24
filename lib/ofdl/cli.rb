@@ -177,6 +177,8 @@ module OFDL
 
         session.archive(targets:, sources: options[:sources], since: options[:since])
 
+        dashboard.stop
+
         puts "\n\nAll Done!  Final stats: "
         dashboard.summary.each { puts(it) }
         session.scratch.remove!
@@ -187,7 +189,7 @@ module OFDL
       @log.step('resolving subscriptions')
       session.stats.scanning(creator: nil, source: 'subscriptions')
 
-      targets = resolve_targets(argv)
+      targets = session.in_walk_order(resolve_targets(argv))
       raise ConfigError, 'no active subscriptions' if targets.empty?
 
       @log.info("  #{targets.size} to archive: #{targets.map { it[:username] }.join(', ')}")
@@ -275,7 +277,7 @@ module OFDL
       session.preview = dashboard
       dashboard.start
       watch_for_interrupt(dashboard)
-      yield self
+      yield dashboard
     ensure
       release_interrupt
       dashboard&.stop

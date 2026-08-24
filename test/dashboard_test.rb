@@ -45,6 +45,18 @@ module OFDL
       assert_match(%r{discovered\s+1,200 images / 216 videos}, header[4])
     end
 
+    # See Stats#done_scanning: the count stays, the name goes.
+    def test_the_creators_field_drops_the_name_once_scanning_is_done
+      @stats.bump(:creators_total, 12).bump(:creators_done, 12)
+      @stats.scanning(creator: 'someone', source: 'posts')
+
+      @stats.done_scanning
+
+      assert_match(%r{creators\s+12/12\s}, header[1])
+      refute_match(/someone/, header[1])
+      assert_match(/scanning\s+done/, header[2])
+    end
+
     # queued is what is still waiting; the three beneath it are what became of
     # the work that has left the queue.
     def test_the_second_column_accounts_for_everything_queued
@@ -84,12 +96,13 @@ module OFDL
       assert_match(/big\.mp4/, slots.first)
     end
 
-    # The pool interleaves creators, so the row names its own; see
-    # Dashboard#target.
-    def test_a_slot_names_the_creator_it_is_fetching_for
-      @stats.begin_download(0, filename: 'a.jpg', path: partial('a.part', 10), total: 100, creator: 'alice')
+    # The pool interleaves creators, so the row names its own, and the source
+    # is the directory the file lands in; see Dashboard#target.
+    def test_a_slot_names_the_creator_and_source_it_is_fetching_for
+      @stats.begin_download(0, filename: 'a.jpg', path: partial('a.part', 10), total: 100, creator: 'alice',
+                               source: 'posts')
 
-      assert_match(%r{alice/a\.jpg}, slots.first)
+      assert_match(%r{alice/posts/a\.jpg}, slots.first)
     end
 
     def test_a_slot_without_a_creator_shows_the_filename_alone

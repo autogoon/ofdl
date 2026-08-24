@@ -24,8 +24,8 @@ module OFDL
 
       assert_equal(1, subject.downloaded)
       assert_equal(100, subject.bytes)
-      # See Stats#record for why the statuses cross over.
-      assert_equal(1, subject.on_disk)
+      # A :skipped outcome is already counted by the walk; see Stats#record.
+      assert_equal(0, subject.on_disk)
       assert_equal(1, subject.skipped)
       assert_equal(1, subject.failed)
     end
@@ -38,16 +38,16 @@ module OFDL
       assert_equal('messages', subject.source)
     end
 
-    # The panel names the creator for the whole of the drain; see
-    # Stats#done_scanning.
-    def test_scanning_finishes_without_clearing_the_creator
+    # Nothing is being scanned once the producer is through, so no creator is
+    # named for the drain; see Stats#done_scanning.
+    def test_scanning_finishes_by_clearing_the_creator
       subject = stats
       subject.scanning(creator: 'someone', source: 'paid')
 
       subject.done_scanning
 
       assert_equal('done', subject.source)
-      assert_equal('someone', subject.creator)
+      assert_nil(subject.creator)
     end
 
     def test_active_downloads_are_registered_and_cleared

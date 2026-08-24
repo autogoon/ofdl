@@ -120,15 +120,26 @@ module OFDL
     #
     # Returns the thread doing the walk.
     def count_library
-      @counted = Watermark.new
+      # The thread holds its own reference: were it to read the ivar, a second
+      # count_library would have this thread's finish release the new
+      # watermark, and the producer would stop waiting for the walk.
+      counted = @counted = Watermark.new
       Thread.new do
-        library.tally(on_creator: ->(name) { @counted.pass(name) }) do |files, bytes|
+        library.tally(on_creator: ->(name) { counted.pass(name) }) do |files, bytes|
           @stats.bump(:on_disk, files).bump(:on_disk_bytes, bytes)
         end
+      rescue StandardError => e
+        @log.warn("library count: #{e.class}: #{e.message} -- continuing without it")
       ensure
-        @counted.finish
+        counted.finish
       end
     end
+
+    # The order Library#tally walks the tree in. Taking the creators in that
+    # order is what makes wait_for_count almost always free: the walk is ahead
+    # of the listing from the first creator, and stays ahead. Public because
+    # the CLI announces the run in this order before archive starts.
+    def in_walk_order(targets) = targets.sort_by { library.walk_key(it[:username]) }
 
     def archive(targets:, sources: @config.sources, since: nil)
       queue = SizedQueue.new(QUEUE_DEPTH)
@@ -246,11 +257,6 @@ module OFDL
       queue.close
     end
 
-    # The order Library#tally walks the tree in. Taking the creators in that
-    # order is what makes the wait below almost always free: the walk is ahead
-    # of the listing from the first creator, and stays ahead.
-    def in_walk_order(targets) = targets.sort_by { library.sanitise(it[:username]) }
-
     # A creator is listed only once the walk has passed it, so nothing is
     # downloaded into a directory the count has still to read.
     #
@@ -258,7 +264,7 @@ module OFDL
     # is held up by the disk, and it is the producer that is waiting, not the
     # whole run -- the pool keeps draining whatever is already queued.
     def wait_for_count(username)
-      name = library.sanitise(username)
+      name = library.walk_key(username)
       return if counted.passed?(name)
 
       @stats.scanning(creator: username, source: 'waiting for listing')
