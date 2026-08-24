@@ -275,7 +275,7 @@ module OFDL
       session.preview = dashboard
       dashboard.start
       watch_for_interrupt(dashboard)
-      yield self
+      yield dashboard
     ensure
       release_interrupt
       dashboard&.stop
