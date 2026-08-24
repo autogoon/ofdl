@@ -66,7 +66,34 @@ this. Shell commands that only read are unaffected.
 
 ## Verifying changes
 
-`rake test` — the whole suite, offline. Nothing in it contacts OnlyFans.
+- `rake test` — the whole suite, offline. Nothing in it contacts OnlyFans.
+- `bundle exec rubocop` — Ruby.
+- `npm run format:check` — markdown and JSON. `npm run format` writes.
+
+## Git workflow
+
+- Put a change on a branch off `master`. **A docs or comments change _alone_
+  doesn't get a branch** — commit it to `master`. Where a branch is already open
+  for other work, docs belong on it like anything else; never carve them out of
+  an active branch.
+- The flow is **branch → do the work → gates → commit → push → open a PR →
+  merge**: push with `git push -u origin <branch>`, then open a PR against
+  `master` with `gh pr create`.
+- **Before opening a PR** (or marking a draft ready), the whole gate set passes:
+
+  - `rake test`, `bundle exec rubocop` and `npm run format:check` all clean;
+  - [`/personal-check`](#personal-check), run after every other gate so it reads
+    every commit that will be pushed — its misses can't be fixed after a push.
+
+- **Check `master` hasn't moved** before pushing and before merging:
+  `git fetch origin && git log --oneline HEAD..origin/master` should be empty.
+  If it isn't, merge `origin/master` into the branch and **verify nothing was
+  lost** — don't trust a clean auto-merge. For mechanical changes (formatting,
+  renames), take the file wholesale from `origin/master`, re-apply the change,
+  and diff to confirm.
+- Merge with a **merge commit**, not squash or rebase, and **delete the branch,
+  local and remote**: `gh pr merge <n> --merge --delete-branch`.
+- Committing, pushing and merging are separate actions. Only do each when asked.
 
 ## `/personal-check`
 
