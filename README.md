@@ -211,8 +211,8 @@ the config file to disable them permanently. Sizing and cropping are in
   ✓ someone/posts/2026-01-14_111_222.jpg  842.0 KB
   → /users/12345/posts?limit=50&order=publish_date_desc&...&beforePublishTime=...
 ┌─ downloading ──────────────────────────────────────────────────────────────────────────────────────────────── 2/4 ─┐
-│ [=====             ]   26%    11.8 MB / 45.8 MB    someone/2026-01-14_111_224.mp4                                  │
-│ rendering                    781.0 KB / 781.0 KB   other/2026-01-11_98_402.jpg                                     │
+│ [=====             ]   26%    11.8 MB / 45.8 MB    someone/posts/2026-01-14_111_224.mp4                            │
+│ rendering                    781.0 KB / 781.0 KB   other/messages/2026-01-11_98_402.jpg                            │
 │ idle                                                                                                               │
 │ idle                                                                                                               │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

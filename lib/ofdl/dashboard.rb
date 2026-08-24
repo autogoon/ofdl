@@ -222,12 +222,13 @@ module OFDL
       ].join('  ')
     end
 
-    # <creator>/<file>, the library layout. The row carries the creator because
-    # the pool interleaves them: the header names the creator being scanned,
-    # which is ahead of the one this slot is fetching.
+    # <creator>/<source>/<file>, the library layout. The row carries the creator
+    # because the pool interleaves them: the header names the creator being
+    # scanned, which is ahead of the one this slot is fetching.
     def target(entry)
-      file = Palette.cyan(entry[:filename].to_s)
-      entry[:creator] ? "#{Palette.blue(entry[:creator])}/#{file}" : file
+      [entry[:creator] && Palette.blue(entry[:creator]),
+       entry[:source] && Palette.cyan(entry[:source]),
+       Palette.cyan(entry[:filename].to_s)].compact.join('/')
     end
 
     # The bar, or the phase label once Stats#phase has been set. The label is

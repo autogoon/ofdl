@@ -66,8 +66,8 @@ module OFDL
         # The dashboard reads live progress by stat()ing the scratch file, and
         # takes the total from the header file curl fills in before the body
         # arrives.
-        @stats&.begin_download(slot, filename: item.filename, path: working,
-                                     total: item.size, headers_path: headers, creator: username)
+        @stats&.begin_download(slot, filename: item.filename, path: working, total: item.size,
+                                     headers_path: headers, creator: username, source: item.source)
         verify!(@transport.download(item.url, working, dump_headers: headers), item)
 
         # Drawn before the copy: publishing to a mounted share takes time, so a

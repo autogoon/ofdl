@@ -84,12 +84,13 @@ module OFDL
       assert_match(/big\.mp4/, slots.first)
     end
 
-    # The pool interleaves creators, so the row names its own; see
-    # Dashboard#target.
-    def test_a_slot_names_the_creator_it_is_fetching_for
-      @stats.begin_download(0, filename: 'a.jpg', path: partial('a.part', 10), total: 100, creator: 'alice')
+    # The pool interleaves creators, so the row names its own, and the source
+    # is the directory the file lands in; see Dashboard#target.
+    def test_a_slot_names_the_creator_and_source_it_is_fetching_for
+      @stats.begin_download(0, filename: 'a.jpg', path: partial('a.part', 10), total: 100, creator: 'alice',
+                               source: 'posts')
 
-      assert_match(%r{alice/a\.jpg}, slots.first)
+      assert_match(%r{alice/posts/a\.jpg}, slots.first)
     end
 
     def test_a_slot_without_a_creator_shows_the_filename_alone

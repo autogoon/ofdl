@@ -69,8 +69,8 @@ module OFDL
     #
     # `path` is the scratch file: the sampler stats it for live byte progress,
     # which avoids threading a callback down through curl.
-    def begin_download(slot, filename:, path:, total:, headers_path: nil, creator: nil)
-      @mutex.synchronize { @active[slot] = { slot:, filename:, path:, total:, headers_path:, creator: } }
+    def begin_download(slot, filename:, path:, total:, headers_path: nil, creator: nil, source: nil)
+      @mutex.synchronize { @active[slot] = { slot:, filename:, path:, total:, headers_path:, creator:, source: } }
       self
     end
 
