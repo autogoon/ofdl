@@ -177,6 +177,8 @@ module OFDL
 
         session.archive(targets:, sources: options[:sources], since: options[:since])
 
+        dashboard.stop
+
         puts "\n\nAll Done!  Final stats: "
         dashboard.summary.each { puts(it) }
         session.scratch.remove!
