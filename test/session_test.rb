@@ -268,6 +268,54 @@ module OFDL
       assert(session.counted.passed?('alice'))
     end
 
+    # A file removed between `children` and `size` raises on the walk thread.
+    # Unrescued it reaches Thread.report_on_exception, which writes to the
+    # terminal the dashboard is drawing on.
+    def test_a_failed_walk_leaves_the_producer_free_to_run
+      session = session_with({})
+      library = FakeLibrary.new
+      library.define_singleton_method(:tally) do |on_creator: nil, &_progress|
+        raise Errno::ENOENT, 'alice/1_10.jpg'
+      end
+      session.instance_variable_set(:@library, library)
+
+      Timeout.timeout(5) { session.count_library.join }
+
+      assert(session.counted.passed?('alice'))
+    end
+
+    # See Session#count_library: the thread holds its own reference, so a walk
+    # still running cannot finish the watermark a later call installed.
+    def test_a_running_walk_does_not_finish_a_later_watermark
+      session = session_with({})
+      entered = Queue.new
+      # One gate per walk, handed out in the order the walks reach `tally`, so
+      # releasing the first cannot release the second instead.
+      gates = [Queue.new, Queue.new]
+      order = Mutex.new
+      started = 0
+      library = FakeLibrary.new
+      library.define_singleton_method(:tally) do |on_creator: nil, &_progress|
+        mine = order.synchronize { started += 1 } - 1
+        entered << mine
+        gates[mine].pop
+        [0, 0]
+      end
+      session.instance_variable_set(:@library, library)
+
+      first = session.count_library
+      entered.pop
+      second = session.count_library
+      later = session.counted
+      gates[0] << :go
+      Timeout.timeout(5) { first.join }
+
+      refute(later.passed?('alice'))
+    ensure
+      gates[1] << :go
+      Timeout.timeout(5) { second&.join }
+    end
+
     # The walk runs alongside the listing, so a creator is held back until the
     # walk has passed it -- no worker writes into a directory still to be read.
     def test_a_creator_is_not_listed_until_the_walk_has_passed_it

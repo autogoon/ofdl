@@ -120,13 +120,18 @@ module OFDL
     #
     # Returns the thread doing the walk.
     def count_library
-      @counted = Watermark.new
+      # The thread holds its own reference: were it to read the ivar, a second
+      # count_library would have this thread's finish release the new
+      # watermark, and the producer would stop waiting for the walk.
+      counted = @counted = Watermark.new
       Thread.new do
-        library.tally(on_creator: ->(name) { @counted.pass(name) }) do |files, bytes|
+        library.tally(on_creator: ->(name) { counted.pass(name) }) do |files, bytes|
           @stats.bump(:on_disk, files).bump(:on_disk_bytes, bytes)
         end
+      rescue StandardError => e
+        @log.warn("library count: #{e.class}: #{e.message} -- continuing without it")
       ensure
-        @counted.finish
+        counted.finish
       end
     end
 
