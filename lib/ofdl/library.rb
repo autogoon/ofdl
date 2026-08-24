@@ -49,6 +49,44 @@ module OFDL
       0
     end
 
+    # Everything in the library, as [files, bytes]: every creator directory and
+    # every source under it. It does not depend on which subscriptions a run
+    # names, nor on the sources or `--since` it was given. See
+    # Session#count_library.
+    #
+    # These are the same per-directory listings `have?` performs one at a time,
+    # so the cache they fill is the one a run's presence checks then read.
+    #
+    # A `.drm` marker counts as a file and adds no bytes: the protected video
+    # itself was never downloaded.
+    #
+    # Each file is yielded as it is read, so a counter fed from here climbs
+    # while the tree is walked rather than stepping once per directory.
+    #
+    # Creators are walked in directory-name order and `on_creator` is called
+    # with each name as it is finished, so a caller running alongside this can
+    # start on a creator the walk has passed. Session#produce is that caller,
+    # and orders its targets the same way.
+    def tally(on_creator: nil)
+      files = bytes = 0
+
+      creator_dirs.each do |creator|
+        source_dirs(creator).each do |dir|
+          paths = media_files(dir)
+          cache(creator.basename.to_s, dir.basename.to_s) { key_set(paths) }
+          paths.each do |path|
+            size = path.extname == '.drm' ? 0 : path.size
+            files += 1
+            bytes += size
+            yield(1, size) if block_given?
+          end
+        end
+        on_creator&.call(creator.basename.to_s)
+      end
+
+      [files, bytes]
+    end
+
     def record(item, username:)
       @mutex.synchronize { (@keys[[sanitise(username), item.source.to_s]] ||= Set.new) << item.key }
     end
@@ -95,6 +133,13 @@ module OFDL
       end
     end
 
+    # The directory a username maps to. Public because a caller ordering itself
+    # against `tally`'s walk has to sort by the same key the walk does.
+    def sanitise(name)
+      cleaned = name.to_s.gsub(%r{[/\\:\0]}, '_').strip
+      cleaned.empty? ? 'unknown' : cleaned
+    end
+
     private
 
     def root_problem
@@ -110,21 +155,32 @@ module OFDL
 
     # One directory listing per (user, source), cached for the run.
     def keys(username, source)
-      cache_key = [sanitise(username), source.to_s]
-      @mutex.synchronize do
-        @keys[cache_key] ||= scan(dir_for(username, source))
+      cache(username, source) { key_set(media_files(dir_for(username, source))) }
+    end
+
+    def cache(username, source)
+      @mutex.synchronize { @keys[[sanitise(username), source.to_s]] ||= yield }
+    end
+
+    # <root>/<username>/<source>/, the layout at the top of this class. A
+    # directory name is a sanitised username, which is what the cache is keyed
+    # by. Sorted, so a walk of the tree has an order others can wait on.
+    def creator_dirs = @root.directory? ? @root.children.select(&:directory?).sort : []
+
+    def source_dirs(creator) = creator.children.select(&:directory?)
+
+    # What counts as present in one (creator, source) directory: a downloaded
+    # file or a `.drm` marker, never a `.part`.
+    def media_files(dir)
+      return [] unless dir.directory?
+
+      dir.children.reject do |path|
+        path.directory? || path.extname == '.part' || key_from(path.basename.to_s).nil?
       end
     end
 
-    def scan(dir)
-      return Set.new unless dir.directory?
-
-      dir.children.each_with_object(Set.new) do |path, set|
-        next if path.directory? || path.extname == '.part'
-
-        key = key_from(path.basename.to_s)
-        set << key if key
-      end
+    def key_set(paths)
+      paths.each_with_object(Set.new) { |path, set| set << key_from(path.basename.to_s) }
     end
 
     # "2026-01-14_1234_5678.mp4" and "...mp4.drm" both yield "1234_5678".
@@ -138,11 +194,6 @@ module OFDL
       return nil unless post_id.match?(/\A\d+\z/) && media_id
 
       "#{post_id}_#{media_id}"
-    end
-
-    def sanitise(name)
-      cleaned = name.to_s.gsub(%r{[/\\:\0]}, '_').strip
-      cleaned.empty? ? 'unknown' : cleaned
     end
   end
 end

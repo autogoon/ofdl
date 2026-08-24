@@ -224,8 +224,9 @@ Three columns, each read downward.
 
 - `creators` — creators finished scanning, over the total, then the one being
   listed.
-- `scanning` — the source being listed. Reads `done` when there's nothing left
-  to list.
+- `scanning` — the step running: `subscriptions`, then the source being listed.
+  Reads `waiting for listing` while listing is held up by the count of
+  `output_dir`, and `done` when there's nothing left to list.
 - `requests` — API calls made.
 - `discovered` — media found, as images / videos.
 
@@ -242,10 +243,10 @@ has left the queue.
 
 **Storage** — how much has landed.
 
-- `on disk` — items this run has accounted for: found already in `output_dir`,
-  downloaded, or skipped as protected. It starts at zero and climbs as the
-  listing reaches them, so it is not the size of `output_dir`. For that, run
-  `ofdl status`.
+- `on disk` — everything in `output_dir`, plus what this run has downloaded. The
+  whole library, not only the creators named on the command line, so it is the
+  same figure whoever you fetch. It fills in over the first seconds of a run,
+  while the directories are read.
 - `fetched` — files and bytes this run downloaded. The count is `successful`.
 - `rate` — `fetched` bytes divided by how long the run has been going. It's an
   average over the whole run, not what's happening right now.

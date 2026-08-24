@@ -115,6 +115,56 @@ module OFDL
       refute_path_exists(missing)
     end
 
+    # The count behind `on disk`; see Session#count_library. Every creator and
+    # every source, so naming one creator on the command line does not change
+    # it. A marker counts as a file and adds no bytes.
+    def test_tally_covers_the_whole_tree
+      @library.prepare(item, username: 'creator').write('12345')
+      @library.write_marker(item(media_id: 333, extension: 'mpd', protected: true), username: 'creator')
+      @library.prepare(item(media_id: 444).with(source: 'messages'), username: 'creator').write('67')
+      @library.prepare(item(media_id: 555), username: 'another').write('89')
+
+      assert_equal([4, 9], @library.tally)
+    end
+
+    # The producer waits on these names, so they have to arrive in the order it
+    # sorts its targets by; see Session#in_walk_order.
+    def test_tally_reports_each_creator_in_name_order
+      %w[carol alice bob].each { @library.prepare(item, username: it).write('1') }
+
+      seen = []
+      @library.tally(on_creator: ->(name) { seen << name })
+
+      assert_equal(%w[alice bob carol], seen)
+    end
+
+    def test_tally_of_an_empty_library_is_zero
+      assert_equal([0, 0], @library.tally)
+    end
+
+    # Fed to the panel as the walk goes, so a large library fills the field in
+    # rather than stepping once per directory.
+    def test_tally_yields_each_file_as_it_reads_it
+      @library.prepare(item, username: 'creator').write('12345')
+      @library.write_marker(item(media_id: 333, extension: 'mpd', protected: true), username: 'creator')
+
+      progress = []
+      total = @library.tally { |files, bytes| progress << [files, bytes] }
+
+      assert_equal([[1, 5], [1, 0]], progress.sort.reverse)
+      assert_equal([2, 5], total)
+    end
+
+    # One listing per directory: the tally fills the cache `have?` reads, rather
+    # than each reading the directory for itself.
+    def test_tally_leaves_the_presence_cache_warm
+      @library.prepare(item, username: 'creator').write('12345')
+      @library.tally
+      FileUtils.remove_entry(File.join(@dir, 'creator'))
+
+      assert(@library.have?(item, username: 'creator'))
+    end
+
     def test_counts_separate_files_from_markers
       @library.prepare(item, username: 'creator').write('12345')
       @library.write_marker(item(media_id: 333, extension: 'mpd', protected: true), username: 'creator')
