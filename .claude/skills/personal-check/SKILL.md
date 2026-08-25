@@ -81,8 +81,8 @@ The rules above tell you what; this tells you where.
 
 Default: the branch — **every revision of every file it changed**, plus
 `git log <base>..HEAD` for messages and the PR's title/body/comments if one is
-open. `<base>` is the last published commit: `origin/master`, or the branch
-point if the branch itself is unpushed.
+open. `<base>` is the last published commit: `origin/main`, or the branch point
+if the branch itself is unpushed.
 
 **A repo with no remote has published nothing yet, so it has no base.** There
 the default scope is the whole history, every commit — and every finding is

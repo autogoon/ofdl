@@ -71,25 +71,25 @@ commands that only read are unaffected.
 
 ## Git workflow
 
-- Put a change on a branch off `master`. **A docs or comments change _alone_
-  doesn't get a branch** — commit it to `master`. Where a branch is already open
+- Put a change on a branch off `main`. **A docs or comments change _alone_
+  doesn't get a branch** — commit it to `main`. Where a branch is already open
   for other work, docs belong on it like anything else; never carve them out of
   an active branch.
 - The flow is **branch → do the work → gates → commit → push → open a PR →
   merge**: push with `git push -u origin <branch>`, then open a PR against
-  `master` with `gh pr create`.
+  `main` with `gh pr create`.
 - **Before opening a PR** (or marking a draft ready), the whole gate set passes:
 
   - `rake test`, `bundle exec rubocop` and `npm run format:check` all clean;
   - [`/personal-check`](#personal-check), run after every other gate so it reads
     every commit that will be pushed — its misses can't be fixed after a push.
 
-- **Check `master` hasn't moved** before pushing and before merging:
-  `git fetch origin && git log --oneline HEAD..origin/master` should be empty.
-  If it isn't, merge `origin/master` into the branch and **verify nothing was
-  lost** — don't trust a clean auto-merge. For mechanical changes (formatting,
-  renames), take the file wholesale from `origin/master`, re-apply the change,
-  and diff to confirm.
+- **Check `main` hasn't moved** before pushing and before merging:
+  `git fetch origin && git log --oneline HEAD..origin/main` should print
+  nothing. When that command prints a commit, merge `origin/main` into the
+  branch and **verify nothing was lost**. For mechanical changes (formatting,
+  renames), take the file wholesale from `origin/main`, re-apply the change, and
+  diff to confirm.
 - Merge with a **merge commit**, not squash or rebase, and **delete the branch,
   local and remote**: `gh pr merge <n> --merge --delete-branch`.
 - Committing, pushing and merging are separate actions. Only do each when asked.
