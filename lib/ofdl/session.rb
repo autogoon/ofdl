@@ -104,28 +104,29 @@ module OFDL
     # creator instead of for the whole tree.
     def counted = @counted ||= Watermark.new.finish
 
-    # `on disk` is a property of the library, not of the listing or of which
-    # subscriptions a run names, so it is read from the tree rather than
-    # accumulated as items are listed.
+    # `on disk` is read from the tree rather than accumulated as items are
+    # listed. `only` is passed to Library#tally, which documents it.
     #
-    # It runs on its own thread: the walk is filesystem-bound and the listing it
-    # overlaps is paced at a couple of requests a second, so on a mounted share
-    # it costs no wall clock at all. What keeps that safe is the watermark --
-    # the producer will not list a creator the walk has yet to pass, so no
-    # worker writes into a directory this has still to read, and the panel's
-    # `downloaded` cannot be counted here as well.
+    # The walk gets its own thread. The walk is filesystem-bound and the
+    # listing the walk overlaps is paced at `requests_per_second`, so the walk
+    # runs in the gaps between requests.
+    #
+    # The producer will not list a creator the walk has yet to pass, so no
+    # worker writes into a directory the walk has still to read. A file written
+    # ahead of the walk would be counted into `on_disk` by the walk and into
+    # `downloaded` by the worker, and Dashboard#header_lines adds the two.
     #
     # Counting per file rather than per directory keeps the figure climbing at
     # the dashboard's refresh rate on a large library.
     #
     # Returns the thread doing the walk.
-    def count_library
+    def count_library(only: nil)
       # The thread holds its own reference: were it to read the ivar, a second
       # count_library would have this thread's finish release the new
       # watermark, and the producer would stop waiting for the walk.
       counted = @counted = Watermark.new
       Thread.new do
-        library.tally(on_creator: ->(name) { counted.pass(name) }) do |files, bytes|
+        library.tally(only:, on_creator: ->(name) { counted.pass(name) }) do |files, bytes|
           @stats.bump(:on_disk, files).bump(:on_disk_bytes, bytes)
         end
       rescue StandardError => e
@@ -141,7 +142,7 @@ module OFDL
     # the CLI announces the run in this order before archive starts.
     def in_walk_order(targets) = targets.sort_by { library.walk_key(it[:username]) }
 
-    def archive(targets:, sources: @config.sources, since: nil)
+    def archive(targets:, sources: @config.sources, since: nil, skip_ads: @config.skip_ads?)
       queue = SizedQueue.new(QUEUE_DEPTH)
       summary = Summary.empty
       tally = { done: 0, bytes: 0 }
@@ -166,7 +167,7 @@ module OFDL
         end
       end
 
-      produce(queue, targets:, sources:, since:)
+      produce(queue, targets:, sources:, since:, skip_ads:)
       @stats.done_scanning
       consumers.each(&:join)
       @log.clear_progress
@@ -175,38 +176,33 @@ module OFDL
 
     # Yields each item the moment it is found. Deduplicated across sources: the
     # same media often appears in both a timeline and the paid feed.
-    def stream(user_id:, sources:, since: nil, username: nil, seen: Set.new)
+    def stream(user_id:, sources:, since: nil, username: nil, seen: Set.new, skip_ads: @config.skip_ads?)
       sources.each do |source|
         @log.step("#{"#{username} " if username}#{source}")
         @stats.scanning(creator: username, source:)
-        rows = media = queued = present = 0
+        counts = Hash.new(0)
 
         each_row(source, user_id) do |row|
-          rows += 1
+          counts[:rows] += 1
+          # Read once per row rather than once per item, and only when the
+          # answer would be acted on.
+          advert = skip_ads && Advert.reason(row, creator: username)
+
           Media.from_row(row, source:).each do |item|
-            media += 1
-            @stats.bump(:media)
-            @stats.bump(:images) if item.still?
-            @stats.bump(:videos) if item.video?
-            next if since && item.posted_at < since
-            next unless seen.add?(item.key)
+            counts[:media] += 1
+            count_discovery(item)
 
-            # Decided here rather than in a worker: `queued` must count only
-            # work that will be done, or a re-run passes its whole library
-            # through the queue.
-            if present?(item, username)
-              present += 1
-              next
+            verdict = verdict_for(item, username:, since:, seen:, advert:)
+            counts[verdict] += 1
+            case verdict
+            when :advert then @log.debug("#{source}/#{item.post_id}: advertises #{advert}, skipped")
+            when :queued then yield item
             end
-
-            queued += 1
-            @stats.bump(:queued)
-            yield item
           end
         end
 
-        @log.info("  #{rows} rows, #{media} media, #{queued} queued" \
-                  "#{tail_note(media, queued, present)}")
+        @log.info("  #{counts[:rows]} rows, #{counts[:media]} media, " \
+                  "#{counts[:queued]} queued#{tail_note(counts)}")
       end
     end
 
@@ -222,16 +218,46 @@ module OFDL
 
     def build_signer(rules) = Signer.new(rules:, user_id: jar.auth_id, xbc: jar.xbc)
 
+    # What becomes of one item, and the one place the order of the tests is
+    # written down: the counters and the panel both follow from the answer.
+    #
+    # `present?` runs here rather than in a worker: `queued` must count only
+    # work that will be done, or a re-run passes its whole library through the
+    # queue. The advert test runs after `present?`, so `ads` counts only media
+    # the run would otherwise have fetched; an advert whose media is already on
+    # disk counts as present instead.
+    def verdict_for(item, username:, since:, seen:, advert:)
+      return :old if since && item.posted_at < since
+      return :duplicate unless seen.add?(item.key)
+      return :present if present?(item, username)
+
+      if advert
+        @stats.bump(:ads)
+        return :advert
+      end
+
+      @stats.bump(:queued)
+      :queued
+    end
+
+    def count_discovery(item)
+      @stats.bump(:media)
+      @stats.bump(:images) if item.still?
+      @stats.bump(:videos) if item.video?
+    end
+
     # The stream is drained without a username in tests, where there is no
     # library to consult.
     def present?(item, username)
       username && library.have?(item, username:)
     end
 
-    def tail_note(media, queued, present)
-      dropped = media - queued - present
+    def tail_note(counts)
+      ads = counts[:advert]
       parts = []
-      parts << "#{present} already on disk" if present.positive?
+      parts << "#{counts[:present]} already on disk" if counts[:present].positive?
+      parts << "#{ads} #{ads == 1 ? 'advert' : 'adverts'}" if ads.positive?
+      dropped = counts[:old] + counts[:duplicate]
       parts << "#{dropped} duplicate or filtered out" if dropped.positive?
       parts.empty? ? '' : " (#{parts.join(', ')})"
     end
@@ -243,12 +269,12 @@ module OFDL
     #
     # creators_done counts creators scanned, not creators drained -- it moves
     # with the header's `scanning` field, which is the same producer position.
-    def produce(queue, targets:, sources:, since:)
+    def produce(queue, targets:, sources:, since:, skip_ads:)
       seen = Set.new
 
       in_walk_order(targets).each do |target|
         wait_for_count(target[:username])
-        stream(user_id: target[:id], username: target[:username], sources:, since:, seen:) do |item|
+        stream(user_id: target[:id], username: target[:username], sources:, since:, seen:, skip_ads:) do |item|
           queue << [item, target[:username]]
         end
         @stats.bump(:creators_done)

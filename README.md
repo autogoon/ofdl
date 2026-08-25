@@ -1,5 +1,9 @@
 # ofdl-rb
 
+<p align="center">
+  <img src="./docs/screenshot.png" alt="The ofdl dashboard: the stats panel, a photo previewed in the terminal, the request log, and the per-worker download rows" width="820">
+</p>
+
 A local archiver for OnlyFans subscriptions, with a live terminal dashboard.
 Ruby, no gems, no database, no server component.
 
@@ -8,12 +12,20 @@ If you want to know how it works inside, that's in
 
 ## What it does and does not do
 
-**Does:** photos, GIFs, audio, and unprotected video, from timelines, DMs,
-stories, highlights, archived posts and purchased posts. Resumable,
-deduplicated, rate limited, and previewed as it goes.
+**Does:**
 
-**Does not:** DRM-protected video. Those items are detected, reported and
-skipped. No setting changes that — see [Protected video](#protected-video).
+- Photos, GIFs, audio, and unprotected video, from timelines, DMs, stories,
+  highlights, archived posts and purchased posts.
+- Resumable, deduplicated, rate limited.
+- Each downloaded photo is previewed in the terminal.
+- Skips posts advertising another creator — another `@handle`, or a link to
+  another onlyfans.com page, in the post text. `--include-ads` keeps those
+  posts; see [Adverts](#adverts).
+
+**Does not:**
+
+- DRM-protected video. Those items are detected, reported and skipped. No
+  setting downloads them — see [Protected video](#protected-video).
 
 ## Requirements
 
@@ -92,6 +104,7 @@ ofdl fetch someone                         # one creator
 ofdl fetch someone other                   # several creators
 ofdl fetch someone --since 2026-01-01      # only recent posts
 ofdl fetch --sources posts,messages        # everything, narrowed
+ofdl fetch someone --include-ads           # keep the posts advertising others
 ofdl --help                                # every command and option
 ```
 
@@ -171,6 +184,7 @@ If the file is unreadable, or isn't a JSON object, ofdl says so and stops.
 | `sources`             | all six                                                | `posts, messages, stories, highlights, paid, archived` |
 | `skip_protected`      | `true`                                                 | skip Widevine video                                    |
 | `mark_protected`      | `true`                                                 | leave `.drm` markers                                   |
+| `skip_ads`            | `true`                                                 | skip posts advertising another creator                 |
 | `images`              | `true`                                                 | preview downloads in the terminal                      |
 | `refresh`             | `0.05`                                                 | seconds between dashboard repaints                     |
 | `ffmpeg`              | `ffmpeg`                                               | path to ffmpeg                                         |
@@ -198,7 +212,7 @@ the config file to disable them permanently. Sizing and cropping are in
 ┌─ ofdl ─────────────────────────────────────────────────────────────────────────────────── 16 fps · io 1ms · 4m12s ─┐
 │ creators    2/10 someone              queued      250                       on disk     1,000 / 20.0 GB            │
 │ scanning    messages                  successful  400                       fetched     400 / 2.0 GB               │
-│ requests    90                        skipped     75                        rate        9.8 MB/s                   │
+│ requests    90                        skipped     78 (drm 75, ads 3)        rate        9.8 MB/s                   │
 │ discovered  1,000 images / 200 videos failed      2                                                                │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 
@@ -238,15 +252,18 @@ has left the queue.
   classifying ofdl's traffic as unusual, since API request frequency is much
   reduced.
 - `successful` — downloads that completed.
-- `skipped` — DRM items, never attempted. Yellow above zero.
+- `skipped` — items never attempted, for one of two reasons: DRM video, and
+  posts advertising another creator. The two are named in brackets once there
+  are adverts. Yellow above zero.
 - `failed` — downloads that didn't complete. Red above zero.
 
 **Storage** — how much has landed.
 
-- `on disk` — everything in `output_dir`, plus what this run has downloaded. The
-  whole library, not only the creators named on the command line, so it is the
-  same figure whoever you fetch. It fills in over the first seconds of a run,
-  while the directories are read.
+- `on disk` — what is already in `output_dir` plus what this run has downloaded.
+  Naming creators on the command line scopes the figure to those creators;
+  naming none covers the whole library. The figure rises as each file in
+  `output_dir` is counted. `ofdl status` reports the whole library's totals
+  whichever creators a run names.
 - `fetched` — files and bytes this run downloaded. The count is `successful`.
 - `rate` — `fetched` bytes divided by how long the run has been going. It's an
   average over the whole run, not what's happening right now.
@@ -283,6 +300,24 @@ It's bookkeeping, not a speed-up — a protected item costs no request either wa
 Set `"mark_protected": false` and you won't get the markers, but then every run
 counts those items as `skipped` again instead of knowing it has already seen
 them.
+
+## Adverts
+
+Creators advertise each other. An advert names the other creator in the post
+text, as an `@handle` or as a link to their onlyfans.com page. A post carrying
+either form is passed over whole, and its media counts under `skipped` as `ads`.
+
+The creator whose wall is being read does not advertise on it, so `@someone` and
+`onlyfans.com/someone` in someone's own posts match nothing. An email address is
+not a handle — the `@` has to follow something other than a word character. A
+link with no username in it, `onlyfans.com/action/trial/...`, is an advert:
+nothing but an advert carries such a link.
+
+Media already in `output_dir` counts as on disk rather than as an advert, so
+`ads` counts what a run would otherwise have downloaded.
+
+`--include-ads` keeps advertising posts for one run and `"skip_ads": false`
+keeps them for good. `-v` prints the handle or URL that matched each post.
 
 ## Rate limiting
 

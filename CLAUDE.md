@@ -60,9 +60,8 @@ Use the same guidelines when talking to the user.
 ## Editing files
 
 Change files with **Edit and Write, never a shell rewrite** — a script rewrite
-renders no diff, so the change has to be taken on trust from a summary.
-[`.claude/hooks/no-shell-edits.sh`](./.claude/hooks/no-shell-edits.sh) enforces
-this. Shell commands that only read are unaffected.
+renders no diff, so the change has to be taken on trust from a summary. Shell
+commands that only read are unaffected.
 
 ## Verifying changes
 

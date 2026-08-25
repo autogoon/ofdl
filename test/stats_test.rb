@@ -26,8 +26,19 @@ module OFDL
       assert_equal(100, subject.bytes)
       # A :skipped outcome is already counted by the walk; see Stats#record.
       assert_equal(0, subject.on_disk)
-      assert_equal(1, subject.skipped)
+      assert_equal(1, subject.drm)
       assert_equal(1, subject.failed)
+    end
+
+    # Adverts are dropped while scanning, so no outcome reaches #record for
+    # them; the producer bumps the counter itself.
+    def test_adverts_are_counted_apart_from_drm
+      subject = stats
+      subject.record(outcome(:protected))
+      subject.bump(:ads, 3)
+
+      assert_equal(1, subject.drm)
+      assert_equal(3, subject.ads)
     end
 
     def test_tracks_what_is_being_scanned

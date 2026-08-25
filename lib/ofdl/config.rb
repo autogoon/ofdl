@@ -20,6 +20,7 @@ module OFDL
       'sources' => SOURCES,
       'skip_protected' => true,
       'mark_protected' => true,
+      'skip_ads' => true,
       'ffmpeg' => 'ffmpeg',
       'curl_impersonate' => 'curl-impersonate',
       'images' => true,
@@ -96,6 +97,10 @@ module OFDL
     def skip_protected? = @data.fetch('skip_protected') != false
 
     def mark_protected? = @data.fetch('mark_protected') != false
+
+    # Posts that advertise another creator; see Advert. `--include-ads`
+    # overrides this key for one run.
+    def skip_ads? = @data.fetch('skip_ads') != false
 
     def ffmpeg = @data.fetch('ffmpeg')
 

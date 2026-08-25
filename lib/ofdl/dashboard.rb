@@ -164,7 +164,7 @@ module OFDL
           [
             field('queued', number(counts[:queued])),
             field('successful', number(counts[:downloaded]), :green),
-            field('skipped', Palette.tally(counts[:skipped], :yellow)),
+            skipped_field(counts),
             field('failed', Palette.tally(counts[:failed], :red))
           ],
           [
@@ -175,6 +175,19 @@ module OFDL
         ),
         box_bottom
       ]
+    end
+
+    # One number, and the two counts it is the sum of. The two are printed only
+    # when `ads` is above zero: a column is (width - 4) / 3, so at eighty
+    # columns 13 characters are left after the label, and " (drm 9, ads 0)" is
+    # 15. Over that width `columns` leaves one space before the next field and
+    # `row` clips the line at the right edge, truncating `rate`.
+    def skipped_field(counts)
+      total = counts[:drm] + counts[:ads]
+      shown = Palette.tally(total, :yellow)
+      return field('skipped', shown) if counts[:ads].zero?
+
+      field('skipped', "#{shown} #{Palette.grey("(drm #{counts[:drm]}, ads #{counts[:ads]})")}")
     end
 
     # Turns columns into the rows the display wants, padding the short ones.

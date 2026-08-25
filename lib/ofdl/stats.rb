@@ -7,9 +7,14 @@ module OFDL
   class Stats
     # `queued` is a gauge, not a tally: the producer bumps it up as it finds
     # work and a worker bumps it down as it takes one.
+    #
+    # `drm` and `ads` are the two reasons media is passed over. The panel adds
+    # them together under "skipped". They are counted apart because they are
+    # decided in different places -- `drm` by a worker, `ads` by the producer --
+    # and because `skip_ads` can be turned off, while no setting downloads DRM.
     COUNTERS = %i[
       creators_total creators_done requests media images videos queued
-      downloaded on_disk skipped failed bytes on_disk_bytes
+      downloaded on_disk drm ads failed bytes on_disk_bytes
     ].freeze
 
     def initialize(clock: -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) })
@@ -95,11 +100,10 @@ module OFDL
     def record(outcome)
       case outcome.status
       when :downloaded then bump(:downloaded).bump(:bytes, outcome.bytes)
-      # An Outcome's :protected means DRM, which the panel calls "skipped". A
-      # :skipped outcome -- the file was already there -- bumps nothing: the
+      # A :skipped outcome -- the file was already there -- bumps nothing: the
       # walk counted that file into `on_disk` before the producer was allowed
       # to list its creator; see Session#count_library.
-      when :protected then bump(:skipped)
+      when :protected then bump(:drm)
       when :failed then bump(:failed)
       end
       self

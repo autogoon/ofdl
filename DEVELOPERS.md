@@ -94,12 +94,19 @@ what is already on disk. Both have to happen there: `queued` should only count
 work that will actually be done, or a re-run puts the entire library through the
 queue.
 
-The panel's `on disk` is not counted there. `Session#count_library` walks the
-output tree on its own thread, started before the subscriptions are resolved, so
-the figure covers the whole library rather than following the producer's
-position, and is the same whichever creators the run names. Those are the same
-per-directory listings `Library#have?` performs lazily, so the producer's checks
-then read a warm cache.
+`Session#verdict_for` applies those tests in one order and returns what became
+of the item: `:old`, `:duplicate`, `:present`, `:advert` or `:queued`. The
+counters and the panel both read that answer. The advert test is `Advert`, which
+reads the post text; `Advert.reason` runs once per row rather than once per
+item, and only when `skip_ads` is set.
+
+The panel's `on disk` is not counted by the producer. `Session#count_library`
+walks the output tree on its own thread, started before the subscriptions are
+resolved. The walk covers the creators named on the command line, or the whole
+tree when no names were given. The producer's wait is a position in an ordered
+walk, so an unscoped walk makes a run naming one creator wait for every
+directory that sorts before that creator's; scoping the walk to that creator
+removes the wait.
 
 `Watermark` is what makes running that walk alongside the listing safe.
 `Library#tally` walks creators in directory-name order and reports each one as

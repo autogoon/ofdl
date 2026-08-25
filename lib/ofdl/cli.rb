@@ -105,6 +105,7 @@ module OFDL
         o.on('--sources source,...', Array, 'narrow to some of the sources; defaults to all of',
              Config::SOURCES.join(', ')) { options[:sources] = it }
         o.on('--since DATE', 'only media posted on or after DATE (YYYY-MM-DD)') { options[:since] = parse_date(it) }
+        o.on('--include-ads', 'keep posts that advertise another creator') { options[:skip_ads] = false }
         o.on('--no-images', 'do not preview downloaded images in the terminal') { options[:images] = false }
       end
     end
@@ -156,7 +157,7 @@ module OFDL
     end
 
     def cmd_fetch(argv)
-      options = { sources: @config.sources, since: nil, images: @config.images? }
+      options = { sources: @config.sources, since: nil, images: @config.images?, skip_ads: @config.skip_ads? }
       fetch_parser(options).parse!(argv)
 
       unknown = options[:sources] - Config::SOURCES
@@ -167,15 +168,17 @@ module OFDL
       with_dashboard(options) do |dashboard|
         session.library.ensure_root!
         session.library.sweep_partials!
-        # Started here and left running: the walk costs no request, so it
-        # overlaps the subscription lookup and the listing after it. The
-        # producer waits on it a creator at a time; see Session#count_library.
-        session.count_library
+        # Started here and left running. Scoping the walk needs only the names,
+        # not the ids `resolve` looks up, so the walk can start before the
+        # subscription lookup; the walk costs no request, so it overlaps that
+        # lookup and the listing that follows. The producer waits on the walk a
+        # creator at a time; see Session#count_library.
+        session.count_library(only: named_creators(argv))
 
         targets = resolve(argv, options)
         session.stats.bump(:creators_total, targets.size)
 
-        session.archive(targets:, sources: options[:sources], since: options[:since])
+        session.archive(targets:, sources: options[:sources], since: options[:since], skip_ads: options[:skip_ads])
 
         dashboard.stop
 
@@ -183,6 +186,15 @@ module OFDL
         dashboard.summary.each { puts(it) }
         session.scratch.remove!
       end
+    end
+
+    # The creator names given on the command line with a leading `@` removed,
+    # or `nil` when no names were given. `nil` leaves the walk unscoped. Case
+    # is folded by Library#tally, not here.
+    def named_creators(names)
+      return nil if names.empty?
+
+      names.map { it.delete_prefix('@') }
     end
 
     def resolve(argv, options)

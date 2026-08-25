@@ -49,6 +49,7 @@ module OFDL
     def test_the_fetch_options_are_listed
       assert_match(/--sources source,\.\.\./, usage)
       assert_match(/--since DATE/, usage)
+      assert_match(/--include-ads/, usage)
       assert_match(/--no-images/, usage)
     end
 
@@ -56,10 +57,30 @@ module OFDL
       assert_match(/-h, --help/, usage)
     end
 
+    # The flag turns the config default off for one run; it never turns it on.
+    def test_include_ads_clears_the_skip
+      options = { skip_ads: true }
+      CLI.new.send(:fetch_parser, options).parse!(['--include-ads'])
+
+      refute(options[:skip_ads])
+    end
+
     # Beside --sources rather than in a footnote, and generated, so a source
     # added to Config::SOURCES is documented without touching the usage screen.
     def test_the_valid_sources_are_named_under_the_option
       assert_match(/--sources source,\.\.\..*\n\s+#{Config::SOURCES.join(', ')}$/, usage)
+    end
+  end
+
+  class CLINamedCreatorsTest < TestCase
+    def named(names) = CLI.new.send(:named_creators, names)
+
+    def test_a_leading_at_is_stripped
+      assert_equal(%w[Alice BOB], named(['@Alice', 'BOB']))
+    end
+
+    def test_no_names_scopes_nothing
+      assert_nil(named([]))
     end
   end
 

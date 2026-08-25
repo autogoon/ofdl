@@ -49,28 +49,32 @@ module OFDL
       0
     end
 
-    # Everything in the library, as [files, bytes]: every creator directory and
-    # every source under it. It does not depend on which subscriptions a run
-    # names, nor on the sources or `--since` it was given. See
-    # Session#count_library.
+    # Returns [files, bytes]. With `only` absent, reads every creator directory
+    # and every source under each creator directory. `only` is creator names
+    # as typed; tally folds each name with `walk_key`, so the case a name is
+    # given in need not match the directory's, and reads only those creators'
+    # directories. The count never depends on the sources a run names, or on
+    # `--since`. See Session#count_library.
     #
-    # These are the same per-directory listings `have?` performs one at a time,
-    # so the cache they fill is the one a run's presence checks then read.
+    # The walk makes the same per-directory listings `have?` makes one at a
+    # time, so the cache the walk fills is the one a run's presence checks then
+    # read.
     #
     # A `.drm` marker counts as a file and adds no bytes: the protected video
-    # itself was never downloaded.
+    # was never downloaded.
     #
     # Each file is yielded as it is read, so a counter fed from here climbs
     # while the tree is walked rather than stepping once per directory.
     #
     # Creators are walked in `walk_key` order and `on_creator` is called with
-    # each key as it is finished, so a caller running alongside this can start
+    # each key as it is finished, so a caller running alongside tally can start
     # on a creator the walk has passed. Session#produce is that caller, and
     # orders its targets by the same key.
-    def tally(on_creator: nil, &progress)
+    def tally(only: nil, on_creator: nil, &progress)
+      wanted = only&.to_set { walk_key(it) }
       files = bytes = 0
 
-      creator_groups.each do |group|
+      creator_groups(wanted).each do |group|
         group.each do |creator|
           counted, size = tally_creator(creator, &progress)
           files += counted
@@ -165,17 +169,19 @@ module OFDL
     # <root>/<username>/<source>/, the layout at the top of this class. A
     # directory name is a sanitised username, which is what the cache is keyed
     # by. Sorted, so a walk of the tree has an order others can wait on.
-    def creator_dirs
+    def creator_dirs(only)
       return [] unless @root.directory?
 
-      @root.children.select(&:directory?).sort_by { walk_key(it.basename.to_s) }
+      dirs = @root.children.select(&:directory?)
+      dirs = dirs.select { only.include?(walk_key(it.basename.to_s)) } if only
+      dirs.sort_by { walk_key(it.basename.to_s) }
     end
 
     # Directories sharing a walk key -- `Alice` beside `alice`, which only a
     # case-sensitive filesystem allows -- form one group, so the key reaches
     # `on_creator` once every directory under it has been read.
-    def creator_groups
-      creator_dirs.chunk_while { |a, b| walk_key(a.basename.to_s) == walk_key(b.basename.to_s) }
+    def creator_groups(only)
+      creator_dirs(only).chunk_while { |a, b| walk_key(a.basename.to_s) == walk_key(b.basename.to_s) }
     end
 
     # The cache key stays the directory's own name: folding it would share one
