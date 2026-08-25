@@ -208,30 +208,6 @@ terminal's inline image protocol, and no other terminal renders it.
 the config file to disable them permanently. Sizing and cropping are in
 [DEVELOPERS.md](./DEVELOPERS.md#image-previews).
 
-```text
-┌─ ofdl ─────────────────────────────────────────────────────────────────────────────────── 16 fps · io 1ms · 4m12s ─┐
-│ creators    2/10 someone              queued      250                       on disk     1,000 / 20.0 GB            │
-│ scanning    messages                  successful  400                       fetched     400 / 2.0 GB               │
-│ requests    90                        skipped     78 (drm 75, ads 3)        rate        9.8 MB/s                   │
-│ discovered  1,000 images / 200 videos failed      2                                                                │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-
-
-
-                                                    [ images ]
-
-
-
-  ✓ someone/posts/2026-01-14_111_222.jpg  842.0 KB
-  → /users/12345/posts?limit=50&order=publish_date_desc&...&beforePublishTime=...
-┌─ downloading ──────────────────────────────────────────────────────────────────────────────────────────────── 2/4 ─┐
-│ [=====             ]   26%    11.8 MB / 45.8 MB    someone/posts/2026-01-14_111_224.mp4                            │
-│ rendering                    781.0 KB / 781.0 KB   other/messages/2026-01-11_98_402.jpg                            │
-│ idle                                                                                                               │
-│ idle                                                                                                               │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
 Three columns, each read downward.
 
 **The crawl** — position, and totals found.
