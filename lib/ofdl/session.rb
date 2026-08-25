@@ -104,28 +104,29 @@ module OFDL
     # creator instead of for the whole tree.
     def counted = @counted ||= Watermark.new.finish
 
-    # `on disk` is a property of the library, not of the listing or of which
-    # subscriptions a run names, so it is read from the tree rather than
-    # accumulated as items are listed.
+    # `on disk` is read from the tree rather than accumulated as items are
+    # listed. `only` is passed to Library#tally, which documents it.
     #
-    # It runs on its own thread: the walk is filesystem-bound and the listing it
-    # overlaps is paced at a couple of requests a second, so on a mounted share
-    # it costs no wall clock at all. What keeps that safe is the watermark --
-    # the producer will not list a creator the walk has yet to pass, so no
-    # worker writes into a directory this has still to read, and the panel's
-    # `downloaded` cannot be counted here as well.
+    # The walk gets its own thread. The walk is filesystem-bound and the
+    # listing the walk overlaps is paced at `requests_per_second`, so the walk
+    # runs in the gaps between requests.
+    #
+    # The producer will not list a creator the walk has yet to pass, so no
+    # worker writes into a directory the walk has still to read. A file written
+    # ahead of the walk would be counted into `on_disk` by the walk and into
+    # `downloaded` by the worker, and Dashboard#header_lines adds the two.
     #
     # Counting per file rather than per directory keeps the figure climbing at
     # the dashboard's refresh rate on a large library.
     #
     # Returns the thread doing the walk.
-    def count_library
+    def count_library(only: nil)
       # The thread holds its own reference: were it to read the ivar, a second
       # count_library would have this thread's finish release the new
       # watermark, and the producer would stop waiting for the walk.
       counted = @counted = Watermark.new
       Thread.new do
-        library.tally(on_creator: ->(name) { counted.pass(name) }) do |files, bytes|
+        library.tally(only:, on_creator: ->(name) { counted.pass(name) }) do |files, bytes|
           @stats.bump(:on_disk, files).bump(:on_disk_bytes, bytes)
         end
       rescue StandardError => e

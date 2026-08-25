@@ -72,6 +72,18 @@ module OFDL
     end
   end
 
+  class CLINamedCreatorsTest < TestCase
+    def named(names) = CLI.new.send(:named_creators, names)
+
+    def test_a_leading_at_is_stripped
+      assert_equal(%w[Alice BOB], named(['@Alice', 'BOB']))
+    end
+
+    def test_no_names_scopes_nothing
+      assert_nil(named([]))
+    end
+  end
+
   class CLIResolveTargetsTest < TestCase
     ROWS = [{ 'id' => 1, 'username' => 'alice' }, { 'id' => 2, 'username' => 'bob' }].freeze
 

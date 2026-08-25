@@ -116,8 +116,8 @@ module OFDL
     end
 
     # The count behind `on disk`; see Session#count_library. Every creator and
-    # every source, so naming one creator on the command line does not change
-    # it. A marker counts as a file and adds no bytes.
+    # every source when `only` is absent. A marker counts as a file and adds no
+    # bytes.
     def test_tally_covers_the_whole_tree
       @library.prepare(item, username: 'creator').write('12345')
       @library.write_marker(item(media_id: 333, extension: 'mpd', protected: true), username: 'creator')
@@ -150,6 +150,22 @@ module OFDL
       @library.tally(on_creator: ->(name) { events << name }) { |_files, _bytes| events << :file }
 
       assert_equal([:file, :file, 'shared'], events)
+    end
+
+    def test_tally_counts_only_the_creators_it_is_given
+      @library.prepare(item, username: 'Creator').write('12345')
+      @library.prepare(item(media_id: 555), username: 'another').write('89')
+
+      assert_equal([1, 5], @library.tally(only: %w[creator]))
+    end
+
+    def test_a_scoped_tally_reports_only_the_creators_it_counted
+      %w[Carol alice BOB].each { @library.prepare(item, username: it).write('1') }
+
+      seen = []
+      @library.tally(only: %w[CAROL alice], on_creator: ->(name) { seen << name })
+
+      assert_equal(%w[alice carol], seen)
     end
 
     def test_tally_of_an_empty_library_is_zero

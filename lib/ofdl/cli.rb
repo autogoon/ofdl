@@ -168,10 +168,12 @@ module OFDL
       with_dashboard(options) do |dashboard|
         session.library.ensure_root!
         session.library.sweep_partials!
-        # Started here and left running: the walk costs no request, so it
-        # overlaps the subscription lookup and the listing after it. The
-        # producer waits on it a creator at a time; see Session#count_library.
-        session.count_library
+        # Started here and left running. Scoping the walk needs only the names,
+        # not the ids `resolve` looks up, so the walk can start before the
+        # subscription lookup; the walk costs no request, so it overlaps that
+        # lookup and the listing that follows. The producer waits on the walk a
+        # creator at a time; see Session#count_library.
+        session.count_library(only: named_creators(argv))
 
         targets = resolve(argv, options)
         session.stats.bump(:creators_total, targets.size)
@@ -184,6 +186,15 @@ module OFDL
         dashboard.summary.each { puts(it) }
         session.scratch.remove!
       end
+    end
+
+    # The creator names given on the command line with a leading `@` removed,
+    # or `nil` when no names were given. `nil` leaves the walk unscoped. Case
+    # is folded by Library#tally, not here.
+    def named_creators(names)
+      return nil if names.empty?
+
+      names.map { it.delete_prefix('@') }
     end
 
     def resolve(argv, options)

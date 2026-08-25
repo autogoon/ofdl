@@ -30,7 +30,9 @@ module OFDL
     end
   end
 
-  class SessionCollectTest < TestCase
+  # Shared by the two session test classes: an API returning canned rows, a
+  # Library over a root that does not exist, and sessions wired to both.
+  module SessionFakes
     FakeApi = Struct.new(:by_source) do
       def posts(_id, archived: false) = by_source.fetch(archived ? 'archived' : 'posts', [])
       def messages(_id) = by_source.fetch('messages', [])
@@ -107,6 +109,10 @@ module OFDL
     def scanning_session(by_source)
       session_with(by_source).tap { it.instance_variable_set(:@library, FakeLibrary.new) }
     end
+  end
+
+  class SessionCollectTest < TestCase
+    include SessionFakes
 
     def test_adverts_are_dropped_and_counted
       session = scanning_session({ 'posts' => [row(1, 10, '2026-01-14T00:00:00Z'),
@@ -290,12 +296,38 @@ module OFDL
       assert_equal(1, session.stats.queued)
     end
 
+    # Split by OnlyFans' classification, not by the extension -- see Item#still?.
+    def test_discovered_media_is_split_into_stills_and_video
+      rows = [row(1, 10, '2026-01-14T00:00:00Z'), row(2, 20, '2026-01-14T00:00:00Z')]
+      rows[1]['media'][0]['type'] = 'video'
+      session = session_with({ 'posts' => rows })
+
+      collect_from(session, user_id: 1, sources: %w[posts])
+
+      assert_equal(1, session.stats.images)
+      assert_equal(1, session.stats.videos)
+    end
+
+    def test_tags_items_with_their_source
+      session = session_with({ 'posts' => [row(1, 10, '2026-01-14T00:00:00Z')],
+                               'messages' => [row(2, 20, '2026-01-14T00:00:00Z')] })
+
+      items = collect_from(session, user_id: 1, sources: %w[posts messages])
+
+      assert_equal(%w[posts messages], items.map(&:source))
+    end
+  end
+
+  # The library walk, and the watermark the producer waits on.
+  class SessionWalkTest < TestCase
+    include SessionFakes
+
     # `on disk` comes from the tree, not from what the run lists; see
     # Session#count_library.
     def test_the_library_is_counted_without_reference_to_the_run
       session = session_with({})
       library = FakeLibrary.new
-      library.define_singleton_method(:tally) do |on_creator: nil, &progress|
+      library.define_singleton_method(:tally) do |only: nil, on_creator: nil, &progress|
         # Per file rather than per directory, so the panel fills in as it walks.
         3.times { progress.call(1, 2048) }
         on_creator.call('alice')
@@ -310,13 +342,30 @@ module OFDL
       assert(session.counted.passed?('alice'))
     end
 
+    def test_the_walk_is_scoped_to_the_creators_it_is_given
+      session = session_with({})
+      library = FakeLibrary.new
+      scoped = nil
+      library.define_singleton_method(:tally) do |only: nil, on_creator: nil, &_progress|
+        scoped = only
+        on_creator.call('zyx')
+        [0, 0]
+      end
+      session.instance_variable_set(:@library, library)
+
+      Timeout.timeout(5) { session.count_library(only: %w[zyx]).join }
+
+      assert_equal(%w[zyx], scoped)
+      assert(session.counted.passed?('zyx'))
+    end
+
     # A file removed between `children` and `size` raises on the walk thread.
     # Unrescued it reaches Thread.report_on_exception, which writes to the
     # terminal the dashboard is drawing on.
     def test_a_failed_walk_leaves_the_producer_free_to_run
       session = session_with({})
       library = FakeLibrary.new
-      library.define_singleton_method(:tally) do |on_creator: nil, &_progress|
+      library.define_singleton_method(:tally) do |only: nil, on_creator: nil, &_progress|
         raise Errno::ENOENT, 'alice/1_10.jpg'
       end
       session.instance_variable_set(:@library, library)
@@ -337,7 +386,7 @@ module OFDL
       order = Mutex.new
       started = 0
       library = FakeLibrary.new
-      library.define_singleton_method(:tally) do |on_creator: nil, &_progress|
+      library.define_singleton_method(:tally) do |only: nil, on_creator: nil, &_progress|
         mine = order.synchronize { started += 1 } - 1
         entered << mine
         gates[mine].pop
@@ -430,27 +479,6 @@ module OFDL
     ensure
       gate.finish
       Timeout.timeout(5) { run&.join }
-    end
-
-    # Split by OnlyFans' classification, not by the extension -- see Item#still?.
-    def test_discovered_media_is_split_into_stills_and_video
-      rows = [row(1, 10, '2026-01-14T00:00:00Z'), row(2, 20, '2026-01-14T00:00:00Z')]
-      rows[1]['media'][0]['type'] = 'video'
-      session = session_with({ 'posts' => rows })
-
-      collect_from(session, user_id: 1, sources: %w[posts])
-
-      assert_equal(1, session.stats.images)
-      assert_equal(1, session.stats.videos)
-    end
-
-    def test_tags_items_with_their_source
-      session = session_with({ 'posts' => [row(1, 10, '2026-01-14T00:00:00Z')],
-                               'messages' => [row(2, 20, '2026-01-14T00:00:00Z')] })
-
-      items = collect_from(session, user_id: 1, sources: %w[posts messages])
-
-      assert_equal(%w[posts messages], items.map(&:source))
     end
   end
 end
