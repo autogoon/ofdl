@@ -94,6 +94,12 @@ what is already on disk. Both have to happen there: `queued` should only count
 work that will actually be done, or a re-run puts the entire library through the
 queue.
 
+`Session#verdict_for` applies those tests in one order and returns what became
+of the item: `:old`, `:duplicate`, `:present`, `:advert` or `:queued`. The
+counters and the panel both read that answer. The advert test is `Advert`, which
+reads the post text; `Advert.reason` runs once per row rather than once per
+item, and only when `skip_ads` is set.
+
 The panel's `on disk` is not counted there. `Session#count_library` walks the
 output tree on its own thread, started before the subscriptions are resolved, so
 the figure covers the whole library rather than following the producer's

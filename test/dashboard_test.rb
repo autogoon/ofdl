@@ -60,12 +60,18 @@ module OFDL
     # queued is what is still waiting; the three beneath it are what became of
     # the work that has left the queue.
     def test_the_second_column_accounts_for_everything_queued
-      @stats.bump(:queued, 369).bump(:downloaded, 121).bump(:failed, 4).bump(:skipped, 2)
+      @stats.bump(:queued, 369).bump(:downloaded, 121).bump(:failed, 4).bump(:drm, 2)
 
       assert_match(/queued\s+369/, header[1])
       assert_match(/successful\s+121/, header[2])
-      assert_match(/skipped\s+2/, header[3])
+      assert_match(/skipped\s+2\s/, header[3])
       assert_match(/failed\s+4/, header[4])
+    end
+
+    def test_skipped_names_its_two_causes_once_there_are_adverts
+      @stats.bump(:drm, 6).bump(:ads, 3)
+
+      assert_match(/skipped\s+9 \(drm 6, ads 3\)/, header[3])
     end
 
     # "on disk" is what is there now, so it has to include whatever this run has

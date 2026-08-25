@@ -49,11 +49,20 @@ module OFDL
     def test_the_fetch_options_are_listed
       assert_match(/--sources source,\.\.\./, usage)
       assert_match(/--since DATE/, usage)
+      assert_match(/--include-ads/, usage)
       assert_match(/--no-images/, usage)
     end
 
     def test_help_is_advertised
       assert_match(/-h, --help/, usage)
+    end
+
+    # The flag turns the config default off for one run; it never turns it on.
+    def test_include_ads_clears_the_skip
+      options = { skip_ads: true }
+      CLI.new.send(:fetch_parser, options).parse!(['--include-ads'])
+
+      refute(options[:skip_ads])
     end
 
     # Beside --sources rather than in a footnote, and generated, so a source

@@ -105,6 +105,7 @@ module OFDL
         o.on('--sources source,...', Array, 'narrow to some of the sources; defaults to all of',
              Config::SOURCES.join(', ')) { options[:sources] = it }
         o.on('--since DATE', 'only media posted on or after DATE (YYYY-MM-DD)') { options[:since] = parse_date(it) }
+        o.on('--include-ads', 'keep posts that advertise another creator') { options[:skip_ads] = false }
         o.on('--no-images', 'do not preview downloaded images in the terminal') { options[:images] = false }
       end
     end
@@ -156,7 +157,7 @@ module OFDL
     end
 
     def cmd_fetch(argv)
-      options = { sources: @config.sources, since: nil, images: @config.images? }
+      options = { sources: @config.sources, since: nil, images: @config.images?, skip_ads: @config.skip_ads? }
       fetch_parser(options).parse!(argv)
 
       unknown = options[:sources] - Config::SOURCES
@@ -175,7 +176,7 @@ module OFDL
         targets = resolve(argv, options)
         session.stats.bump(:creators_total, targets.size)
 
-        session.archive(targets:, sources: options[:sources], since: options[:since])
+        session.archive(targets:, sources: options[:sources], since: options[:since], skip_ads: options[:skip_ads])
 
         dashboard.stop
 

@@ -97,6 +97,48 @@ module OFDL
       session
     end
 
+    def advert_row(post_id, media_id, text)
+      row(post_id, media_id, '2026-01-14T00:00:00Z').merge('text' => text)
+    end
+
+    # Passing a username makes the producer consult the library, so these tests
+    # supply a Library over a root that does not exist. The test config sets no
+    # output_dir, so the real Library cannot be built.
+    def scanning_session(by_source)
+      session_with(by_source).tap { it.instance_variable_set(:@library, FakeLibrary.new) }
+    end
+
+    def test_adverts_are_dropped_and_counted
+      session = scanning_session({ 'posts' => [row(1, 10, '2026-01-14T00:00:00Z'),
+                                               advert_row(2, 20, 'go see @bob')] })
+
+      items = collect_from(session, user_id: 1, sources: %w[posts], username: 'alice')
+
+      assert_equal(['1_10'], items.map(&:key))
+      assert_equal(1, session.stats.ads)
+      # The advert's media is counted before the post is dropped, so both items
+      # reach `media`.
+      assert_equal(2, session.stats.media)
+    end
+
+    def test_the_creator_being_scanned_is_who_their_own_handle_is_measured_against
+      session = scanning_session({ 'posts' => [advert_row(1, 10, '@alice is back tomorrow')] })
+
+      items = collect_from(session, user_id: 1, sources: %w[posts], username: 'alice')
+
+      assert_equal(['1_10'], items.map(&:key))
+      assert_equal(0, session.stats.ads)
+    end
+
+    def test_include_ads_keeps_them
+      session = scanning_session({ 'posts' => [advert_row(1, 10, 'go see @bob')] })
+
+      items = collect_from(session, user_id: 1, sources: %w[posts], username: 'alice', skip_ads: false)
+
+      assert_equal(['1_10'], items.map(&:key))
+      assert_equal(0, session.stats.ads)
+    end
+
     def test_deduplicates_across_sources
       shared = row(1, 10, '2026-01-14T00:00:00Z')
       session = session_with({ 'posts' => [shared], 'paid' => [shared] })

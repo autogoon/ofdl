@@ -21,6 +21,11 @@ module OFDL
       assert_equal(Pathname('/tmp/x'), config.output_dir)
     end
 
+    def test_ads_are_skipped_unless_the_config_says_otherwise
+      assert_predicate(Config.new(write({ 'output_dir' => '/tmp/x' })), :skip_ads?)
+      refute_predicate(Config.new(write({ 'output_dir' => '/tmp/x', 'skip_ads' => false })), :skip_ads?)
+    end
+
     # An absent key is how a config tracks the app; see Config#write_example!.
     def test_init_writes_only_the_required_key
       path = @dir.join('fresh.json')
