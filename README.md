@@ -1,5 +1,9 @@
 # ofdl-rb
 
+<p align="center">
+  <img src="./docs/screenshot.png" alt="The ofdl dashboard: the stats panel, a photo previewed in the terminal, the request log, and the per-worker download rows" width="820">
+</p>
+
 A local archiver for OnlyFans subscriptions, with a live terminal dashboard.
 Ruby, no gems, no database, no server component.
 
@@ -8,16 +12,20 @@ If you want to know how it works inside, that's in
 
 ## What it does and does not do
 
-**Does:** photos, GIFs, audio, and unprotected video, from timelines, DMs,
-stories, highlights, archived posts and purchased posts. Resumable,
-deduplicated, rate limited, and previewed as it goes.
+**Does:**
 
-**Does not:** DRM-protected video. Those items are detected, reported and
-skipped. No setting changes that — see [Protected video](#protected-video).
+- Photos, GIFs, audio, and unprotected video, from timelines, DMs, stories,
+  highlights, archived posts and purchased posts.
+- Resumable, deduplicated, rate limited.
+- Each downloaded photo is previewed in the terminal.
+- Skips posts advertising another creator — another `@handle`, or a link to
+  another onlyfans.com page, in the post text. `--include-ads` keeps those
+  posts; see [Adverts](#adverts).
 
-**Skips by default:** posts advertising another creator — another `@handle`, or
-a link to another onlyfans.com page, in the post text. `--include-ads` keeps
-those posts; see [Adverts](#adverts).
+**Does not:**
+
+- DRM-protected video. Those items are detected, reported and skipped. No
+  setting downloads them — see [Protected video](#protected-video).
 
 ## Requirements
 
@@ -251,10 +259,11 @@ has left the queue.
 
 **Storage** — how much has landed.
 
-- `on disk` — everything in `output_dir`, plus what this run has downloaded. The
-  whole library, not only the creators named on the command line, so it is the
-  same figure whoever you fetch. It fills in over the first seconds of a run,
-  while the directories are read.
+- `on disk` — what is already in `output_dir` plus what this run has downloaded.
+  Naming creators on the command line scopes the figure to those creators;
+  naming none covers the whole library. The figure rises as each file in
+  `output_dir` is counted. `ofdl status` reports the whole library's totals
+  whichever creators a run names.
 - `fetched` — files and bytes this run downloaded. The count is `successful`.
 - `rate` — `fetched` bytes divided by how long the run has been going. It's an
   average over the whole run, not what's happening right now.
