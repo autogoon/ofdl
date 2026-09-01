@@ -9,13 +9,23 @@ module OFDL
   # the TLS fingerprint and every other browser header.
   #
   # The two are allowed to disagree. curl-impersonate trails Chrome's release
-  # cadence, so its newest profile is often a major behind what is installed;
-  # the fingerprint comes from that newest profile, while the User-Agent reports
-  # the installed Chrome, whose profile the session cookies come from.
-  # Cloudflare fingerprints TLS and header shape; OnlyFans, if it checks
-  # anything, checks the User-Agent.
+  # cadence, so curl-impersonate's newest profile is often a major behind what
+  # is running; the fingerprint comes from that newest profile, while the
+  # User-Agent reports the Chrome that made the session cookies. Cloudflare
+  # fingerprints TLS and header shape; OnlyFans, if it checks anything, checks
+  # the User-Agent.
+  #
+  # The version is the one that last ran, not the one installed. Chrome stages
+  # an update by replacing the bundle while the old build keeps running, so
+  # Info.plist can report a major version under which no session was created. A
+  # User-Agent built from that major contradicts the cookies in the same
+  # request.
   module Chrome
     BUNDLES = ['/Applications/Google Chrome.app', '~/Applications/Google Chrome.app'].freeze
+
+    # Written by Chrome each time it starts. Shared with Cookies::PROFILE_ROOT,
+    # which reads the jar the same Chrome wrote.
+    LAST_VERSION = 'Last Version'
 
     # Chrome's UA is reduced: platform frozen at 10_15_7 even on Apple silicon,
     # and minor/build/patch always reported as 0.0.0.
@@ -25,7 +35,11 @@ module OFDL
     class << self
       def installed? = !bundle.nil?
 
-      def version = @version ||= bundle && read_version(bundle)
+      def version = @version ||= last_run_version || installed_version
+
+      def installed_version = bundle && read_version(bundle)
+
+      def profile_root = Pathname(Cookies::PROFILE_ROOT).expand_path
 
       def major_version
         @major_version ||= version&.[](/\A(\d+)\./, 1)&.to_i
@@ -44,6 +58,16 @@ module OFDL
       end
 
       private
+
+      def last_run_version(root = profile_root)
+        path = root.join(LAST_VERSION)
+        return nil unless path.file?
+
+        version = path.read.strip
+        version.match?(/\A\d+\./) ? version : nil
+      rescue SystemCallError
+        nil
+      end
 
       def read_version(bundle)
         out, status = Open3.capture2e(

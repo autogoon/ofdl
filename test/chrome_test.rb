@@ -28,10 +28,32 @@ module OFDL
       assert_kind_of(Integer, Chrome.major_version)
     end
 
-    def test_user_agent_reports_the_installed_major
+    def test_user_agent_reports_the_running_major
       skip('Chrome not installed') unless Chrome.installed?
 
       assert_includes(Chrome.user_agent, "Chrome/#{Chrome.major_version}.0.0.0")
+    end
+
+    def test_reads_the_version_that_last_ran
+      Dir.mktmpdir do |dir|
+        Pathname(dir).join(Chrome::LAST_VERSION).write("151.0.7922.174\n")
+
+        assert_equal('151.0.7922.174', Chrome.send(:last_run_version, Pathname(dir)))
+      end
+    end
+
+    def test_there_is_no_last_run_version_until_chrome_has_started
+      Dir.mktmpdir do |dir|
+        assert_nil(Chrome.send(:last_run_version, Pathname(dir)))
+      end
+    end
+
+    def test_a_last_version_file_that_is_not_a_version_is_ignored
+      Dir.mktmpdir do |dir|
+        Pathname(dir).join(Chrome::LAST_VERSION).write("\n")
+
+        assert_nil(Chrome.send(:last_run_version, Pathname(dir)))
+      end
     end
   end
 end
