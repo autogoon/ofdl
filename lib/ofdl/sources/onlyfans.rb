@@ -67,21 +67,24 @@ module OFDL
         @log.warn("#{post_type}: #{e.message} -- continuing without it")
       end
 
-      # What `ofdl status` prints for this app, as label/value pairs; the report
-      # owns the column widths.
+      # What `ofdl status` prints for this app, as label/value pairs.
+      #
+      # Yielded one at a time, with the /users/me request last. An expired
+      # session fails on that request, and the cookie, auth_id, x-bc and rules
+      # pairs show which part of the session was sent. Building the pairs into
+      # an array would raise before any of them reached the screen.
       def status_lines
+        yield ['cookies', "#{jar.values.size} for onlyfans.com (#{jar.values.keys.sort.join(', ')})"]
+        yield ['auth_id', jar.auth_id]
+        yield ['x-bc', Display.truncate(jar.xbc)]
+        yield ['rules', "static_param #{Display.truncate(rules.static_param)}, " \
+                        "#{rules.checksum_indexes.size} checksum indexes"]
+
         me = api.me
         username = me['username'] || me['name']
         raise ApiError, "authenticated, but /users/me returned no username: #{me.inspect}" unless username
 
-        [
-          ['cookies', "#{jar.values.size} for onlyfans.com (#{jar.values.keys.sort.join(', ')})"],
-          ['auth_id', jar.auth_id],
-          ['x-bc', Display.truncate(jar.xbc)],
-          ['rules', "static_param #{Display.truncate(rules.static_param)}, " \
-                    "#{rules.checksum_indexes.size} checksum indexes"],
-          ['signed in', "@#{username} (id #{me['id']}), #{me['subscribesCount']} subscriptions"]
-        ]
+        yield ['signed in', "@#{username} (id #{me['id']}), #{me['subscribesCount']} subscriptions"]
       end
 
       def jar = @jar ||= Cookies.load(profile: @config.chrome_profile)

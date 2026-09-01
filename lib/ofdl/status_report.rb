@@ -47,7 +47,7 @@ module OFDL
     # cover more than one and each has its own session to prove.
     def sign_in(key)
       @log.step(key)
-      @session.adapter_for(key).status_lines.each { |label, value| line(label, value) }
+      @session.adapter_for(key).status_lines { |label, value| line(label, value) }
     end
 
     private

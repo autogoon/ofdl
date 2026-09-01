@@ -83,13 +83,27 @@ module OFDL
     def test_an_apps_section_is_headed_by_its_name_and_lines_up_with_the_rest
       session = library_session
       adapter = Object.new
-      adapter.define_singleton_method(:status_lines) { [['signed in', '@someone'], %w[cookies 7]] }
+      pairs = [['signed in', '@someone'], %w[cookies 7]]
+      adapter.define_singleton_method(:status_lines) { |&block| pairs.each(&block) }
       session.define_singleton_method(:adapter_for) { |_key| adapter }
 
       report(session:).sign_in('onlyfans')
 
       assert_includes(@log.lines, 'onlyfans')
       assert_includes(@log.lines, '  signed in    @someone')
+      assert_includes(@log.lines, '  cookies      7')
+    end
+
+    def test_lines_reach_the_screen_before_a_later_one_raises
+      session = library_session
+      adapter = Object.new
+      adapter.define_singleton_method(:status_lines) do |&block|
+        block.call(%w[cookies 7])
+        raise ApiError, 'HTTP 400'
+      end
+      session.define_singleton_method(:adapter_for) { |_key| adapter }
+
+      assert_raises(ApiError) { report(session:).sign_in('onlyfans') }
       assert_includes(@log.lines, '  cookies      7')
     end
   end
