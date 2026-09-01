@@ -39,9 +39,12 @@ module OFDL
     # accept -- 401/403 also cover a dead session; see refresh_rules!.
     STALE_RULES_STATUSES = [400, 401, 403].freeze
 
-    def initialize(jar:, signer:, transport:, rate_limiter:, log:, site_state: nil, stats: nil, refresh_signer: nil)
+    def initialize(jar:, transport:, rate_limiter:, log:, base: BASE, signer: nil, site_state: nil,
+                   stats: nil, refresh_signer: nil, extra_headers: {})
       @jar = jar
+      @base = base
       @signer = signer
+      @extra_headers = extra_headers
       @transport = transport
       @rate_limiter = rate_limiter
       @log = log
@@ -69,7 +72,7 @@ module OFDL
     # OnlyFans endpoints (see SiteState::HASH_URL), not to /api2/v2 calls, and
     # sending it here gets the request rejected.
     def build_uri(path, params)
-      uri = URI("#{BASE}#{path}")
+      uri = URI("#{@base}#{path}")
       query = params.compact.transform_keys(&:to_s)
       uri.query = URI.encode_www_form(query) unless query.empty?
       uri
@@ -88,8 +91,7 @@ module OFDL
       'sec-fetch-mode' => 'cors',
       'sec-fetch-dest' => 'empty',
       'priority' => 'u=1, i',
-      'upgrade-insecure-requests' => '',
-      'referer' => 'https://onlyfans.com/'
+      'upgrade-insecure-requests' => ''
     }.freeze
 
     # `private` above does not reach constants, so say it here.
@@ -97,11 +99,15 @@ module OFDL
 
     # `x-of-rev` and `x-hash` are not part of the signature, but the web client
     # sends them on every /api2/v2 call; see SiteState.
+    #
+    # A source with no request signing passes no signer and carries whatever
+    # its own client sends in `extra_headers` -- for Instagram, `x-ig-app-id`.
     def headers(request_path)
-      @signer.headers_for(request_path)
-             .merge(XHR_HEADERS)
-             .merge(@site_state&.headers || {})
-             .merge('user-agent' => Chrome.user_agent, 'cookie' => @jar.header)
+      (@signer&.headers_for(request_path) || {})
+        .merge(XHR_HEADERS)
+        .merge(@site_state&.headers || {})
+        .merge(@extra_headers)
+        .merge('user-agent' => Chrome.user_agent, 'cookie' => @jar.header)
     end
 
     def perform(uri, request_path)
@@ -170,7 +176,9 @@ module OFDL
         attempt += 1
         yield
       rescue ApiError => e
-        if STALE_RULES_STATUSES.include?(e.status)
+        # Only a signed request can be rejected for its signature, so a source
+        # with no signer takes these as the plain errors they are.
+        if @signer && STALE_RULES_STATUSES.include?(e.status)
           raise rejected_error(e) unless refresh_rules!
 
           retry

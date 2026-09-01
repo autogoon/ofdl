@@ -110,6 +110,7 @@ module OFDL
           jar:, signer:, transport: @transport, site_state:, stats: @stats,
           rate_limiter: RateLimiter.new(@config.requests_per_second),
           log: @log,
+          extra_headers: { 'referer' => 'https://onlyfans.com/' },
           refresh_signer: -> { refresh_signer! }
         )
       end

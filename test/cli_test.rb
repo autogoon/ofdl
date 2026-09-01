@@ -152,10 +152,15 @@ module OFDL
     # A slash in a creator name would otherwise be read as a prefix for an app
     # that does not exist, and the run would go on to look the whole thing up.
     def test_an_unknown_prefix_is_an_error_naming_the_apps
-      error = assert_raises(ConfigError) { split('instagram/alice') }
+      error = assert_raises(ConfigError) { split('tiktok/alice') }
 
-      assert_match(/instagram/, error.message)
+      assert_match(/tiktok/, error.message)
       assert_match(/onlyfans/, error.message)
+    end
+
+    def test_instagram_is_read_from_either_short_form
+      assert_equal(%w[instagram alice], split('i/alice'))
+      assert_equal(%w[instagram alice], split('ig/alice'))
     end
   end
 

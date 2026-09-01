@@ -11,7 +11,7 @@ module OFDL
     # Sources::OnlyFans::POST_TYPES -- and a run walks the two intersected, so
     # naming a feed only one app carries selects it there and is absent
     # elsewhere rather than failing.
-    POST_TYPES = %w[posts messages stories highlights paid archived].freeze
+    POST_TYPES = %w[posts messages stories highlights paid archived reels avatar].freeze
 
     # output_dir is not here. It is the one key with no defensible default: an
     # invented root would be silently created on the boot disk the first time a

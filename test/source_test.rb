@@ -18,10 +18,15 @@ module OFDL
       assert_equal('onlyfans', Source.resolve('OF'))
     end
 
+    def test_instagram_resolves_from_either_short_form
+      assert_equal('instagram', Source.resolve('i'))
+      assert_equal('instagram', Source.resolve('ig'))
+    end
+
     # An app is listed once it can be fetched from, so a name for one that
     # cannot resolves to nothing rather than to a source with no adapter.
     def test_an_unsupported_app_does_not_resolve
-      assert_nil(Source.resolve('instagram'))
+      assert_nil(Source.resolve('tiktok'))
       assert_nil(Source.resolve('nonsense'))
     end
 
@@ -32,7 +37,7 @@ module OFDL
     end
 
     def test_all_lists_the_full_names
-      assert_equal(%w[onlyfans], Source::ALL)
+      assert_equal(%w[onlyfans instagram], Source::ALL)
     end
   end
 end

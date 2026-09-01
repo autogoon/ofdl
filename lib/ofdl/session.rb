@@ -67,6 +67,7 @@ module OFDL
       @adapters[key] ||=
         case key
         when Source::ONLYFANS then Sources::OnlyFans.new(config: @config, log: @log, stats: @stats, transport:)
+        when Source::INSTAGRAM then Sources::Instagram.new(config: @config, log: @log, stats: @stats, transport:)
         else raise Error, "no adapter for source #{key.inspect}"
         end
     end

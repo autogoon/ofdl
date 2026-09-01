@@ -64,6 +64,13 @@ module OFDL
       # Api#posts.
       def posted_at(row) = timestamp(row)
 
+      # The extension a URL and a kind imply. Public because every source
+      # writes into the same tree and the mapping from kind to extension is one
+      # fact; see Sources::Instagram::Media.
+      def extension_for(url, kind)
+        from_url(url) || EXTENSION_BY_KIND.fetch(kind, 'bin')
+      end
+
       private
 
       def from_media(media, row:, source:, post_type:, posted_at:)
@@ -93,10 +100,6 @@ module OFDL
       def manifest_url(drm)
         manifest = drm['manifest'] || {}
         manifest['dash'] || manifest['hls']
-      end
-
-      def extension_for(url, kind)
-        from_url(url) || EXTENSION_BY_KIND.fetch(kind, 'bin')
       end
 
       def from_url(url)

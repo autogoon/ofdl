@@ -13,9 +13,10 @@ module OFDL
   # source with nothing behind it.
   module Source
     ONLYFANS = 'onlyfans'
+    INSTAGRAM = 'instagram'
 
     # Full name => the short forms accepted in a command-line prefix.
-    ALIASES = { ONLYFANS => %w[of] }.freeze
+    ALIASES = { ONLYFANS => %w[of], INSTAGRAM => %w[i ig] }.freeze
 
     ALL = ALIASES.keys.freeze
 
