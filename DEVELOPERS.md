@@ -109,15 +109,15 @@ directory that sorts before that creator's; scoping the walk to that creator
 removes the wait.
 
 `Watermark` is what makes running that walk alongside the listing safe.
-`Library#tally` walks creators in directory-name order and reports each one as
-it finishes; `Session#produce` orders its targets the same way and waits for the
-walk to pass a creator before listing it. So no worker writes into a directory
-the walk has still to read, which would count that file twice — once in the walk
-and once as `downloaded`. The wait is almost always already satisfied: the walk
-is filesystem-bound, and the listing it races is paced at a couple of requests a
-second. A creator with no directory yet needs no special case, because the walk
-is ordered: a name it has gone past without reporting is a name it does not
-hold.
+`Library#tally` walks creators in `<source>/<creator>` order and reports each
+one as it finishes; `Session#produce` orders its targets by the same key and
+waits for the walk to pass a creator before listing it. So no worker writes into
+a directory the walk has still to read, which would count that file twice — once
+in the walk and once as `downloaded`. The wait is almost always already
+satisfied: the walk is filesystem-bound, and the listing it races is paced at a
+couple of requests a second. A creator with no directory yet needs no special
+case, because the walk is ordered: a name it has gone past without reporting is
+a name it does not hold.
 
 There's no "N items to download" headline, because nothing knows the total until
 the last page has been listed.

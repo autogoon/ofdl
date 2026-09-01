@@ -109,6 +109,8 @@ module OFDL
     def scanning_session(by_post_type)
       session_with(by_post_type).tap { it.instance_variable_set(:@library, FakeLibrary.new) }
     end
+
+    def target(id, username, source: Source::ONLYFANS) = { source:, id:, username: }
   end
 
   class SessionCollectTest < TestCase
@@ -161,7 +163,7 @@ module OFDL
       collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice',
                             since: Time.parse('2026-08-01T00:00:00Z'))
 
-      assert_equal(['alice/posts'], session.gaps)
+      assert_equal(['onlyfans/alice/posts'], session.gaps)
     end
 
     def test_a_post_before_since_that_is_on_disk_is_not_a_gap
@@ -228,7 +230,7 @@ module OFDL
       session = streaming_session(blocking, downloaded)
 
       Timeout.timeout(5) do
-        summary = session.archive(targets: [{ id: 1, username: 'creator' }], post_types: %w[posts])
+        summary = session.archive(targets: [target(1, 'creator')], post_types: %w[posts])
 
         assert_equal(2, summary.downloaded)
       end
@@ -245,7 +247,7 @@ module OFDL
       session.instance_variable_set(:@downloader, quiet)
       session.instance_variable_set(:@library, FakeLibrary.new)
 
-      Timeout.timeout(5) { session.archive(targets: [{ id: 1, username: 'creator' }], post_types: %w[posts]) }
+      Timeout.timeout(5) { session.archive(targets: [target(1, 'creator')], post_types: %w[posts]) }
 
       assert_equal(0, session.stats.queued)
     end
@@ -260,7 +262,7 @@ module OFDL
       session.instance_variable_set(:@downloader, quiet)
       session.instance_variable_set(:@library, FakeLibrary.new)
 
-      Timeout.timeout(5) { session.archive(targets: [{ id: 1, username: 'creator' }], post_types: %w[posts]) }
+      Timeout.timeout(5) { session.archive(targets: [target(1, 'creator')], post_types: %w[posts]) }
 
       assert_equal('done', session.stats.step)
     end
@@ -294,7 +296,7 @@ module OFDL
       session.instance_variable_set(:@library, FakeLibrary.new)
 
       summary = Timeout.timeout(5) do
-        session.archive(targets: [{ id: 1, username: 'alice' }, { id: 2, username: 'bob' }],
+        session.archive(targets: [target(1, 'alice'), target(2, 'bob')],
                         post_types: %w[posts])
       end
 
@@ -311,7 +313,7 @@ module OFDL
       session.instance_variable_set(:@downloader, exploding)
       session.instance_variable_set(:@library, FakeLibrary.new)
 
-      summary = Timeout.timeout(5) { session.archive(targets: [{ id: 1, username: 'creator' }], post_types: %w[posts]) }
+      summary = Timeout.timeout(5) { session.archive(targets: [target(1, 'creator')], post_types: %w[posts]) }
 
       assert_equal(1, summary.failed)
     end
@@ -367,7 +369,7 @@ module OFDL
       library.define_singleton_method(:tally) do |only: nil, on_creator: nil, &progress|
         # Per file rather than per directory, so the panel fills in as it walks.
         3.times { progress.call(1, 2048) }
-        on_creator.call('alice')
+        on_creator.call('onlyfans/alice')
         [3, 6144]
       end
       session.instance_variable_set(:@library, library)
@@ -376,7 +378,7 @@ module OFDL
 
       assert_equal(3, session.stats.on_disk)
       assert_equal(6144, session.stats.on_disk_bytes)
-      assert(session.counted.passed?('alice'))
+      assert(session.counted.passed?('onlyfans/alice'))
     end
 
     def test_the_walk_is_scoped_to_the_creators_it_is_given
@@ -385,15 +387,16 @@ module OFDL
       scoped = nil
       library.define_singleton_method(:tally) do |only: nil, on_creator: nil, &_progress|
         scoped = only
-        on_creator.call('zyx')
+        on_creator.call('onlyfans/zyx')
         [0, 0]
       end
       session.instance_variable_set(:@library, library)
+      wanted = [{ source: Source::ONLYFANS, username: 'zyx' }]
 
-      Timeout.timeout(5) { session.count_library(only: %w[zyx]).join }
+      Timeout.timeout(5) { session.count_library(only: wanted).join }
 
-      assert_equal(%w[zyx], scoped)
-      assert(session.counted.passed?('zyx'))
+      assert_equal(wanted, scoped)
+      assert(session.counted.passed?('onlyfans/zyx'))
     end
 
     # A file removed between `children` and `size` raises on the walk thread.
@@ -409,7 +412,7 @@ module OFDL
 
       Timeout.timeout(5) { session.count_library.join }
 
-      assert(session.counted.passed?('alice'))
+      assert(session.counted.passed?('onlyfans/alice'))
     end
 
     # See Session#count_library: the thread holds its own reference, so a walk
@@ -453,13 +456,13 @@ module OFDL
       gate = Watermark.new
       session.instance_variable_set(:@counted, gate)
 
-      run = Thread.new { session.archive(targets: [{ id: 1, username: 'creator' }], post_types: %w[posts]) }
+      run = Thread.new { session.archive(targets: [target(1, 'creator')], post_types: %w[posts]) }
       await_wait(session)
 
       assert_equal('creator', session.stats.creator)
       assert_equal(0, session.stats.media)
 
-      gate.pass('creator')
+      gate.pass('onlyfans/creator')
 
       assert_equal(1, Timeout.timeout(5) { run.value }.downloaded)
     end
@@ -470,7 +473,7 @@ module OFDL
       session = session_with({})
       session.instance_variable_set(:@library, FakeLibrary.new)
 
-      names = session.in_walk_order([{ id: 2, username: 'Bob' }, { id: 1, username: 'alice' }]).map { it[:username] }
+      names = session.in_walk_order([target(2, 'Bob'), target(1, 'alice')]).map { it[:username] }
 
       assert_equal(%w[alice Bob], names)
     end
@@ -484,14 +487,14 @@ module OFDL
       gate = Watermark.new
       session.instance_variable_set(:@counted, gate)
 
-      run = Thread.new { session.archive(targets: [{ id: 1, username: 'Alice' }], post_types: %w[posts]) }
+      run = Thread.new { session.archive(targets: [target(1, 'Alice')], post_types: %w[posts]) }
       await_wait(session)
 
-      gate.pass('Bob')
+      gate.pass('onlyfans/Bob')
 
       assert_nil(run.join(0.05))
 
-      gate.pass('alice')
+      gate.pass('onlyfans/alice')
 
       assert_equal(0, Timeout.timeout(5) { run.value }.downloaded)
     ensure
@@ -508,7 +511,7 @@ module OFDL
       session.instance_variable_set(:@counted, gate)
 
       run = Thread.new do
-        session.archive(targets: [{ id: 2, username: 'bob' }, { id: 1, username: 'alice' }], post_types: %w[posts])
+        session.archive(targets: [target(2, 'bob'), target(1, 'alice')], post_types: %w[posts])
       end
       await_wait(session)
 

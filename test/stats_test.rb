@@ -7,7 +7,7 @@ module OFDL
     def stats(clock: -> { 0.0 }) = Stats.new(clock:)
 
     def outcome(status, bytes = 0)
-      item = Item.new(media_id: 1, post_id: 2, post_type: 'posts', kind: 'photo',
+      item = Item.new(media_id: 1, post_id: 2, source: Source::ONLYFANS, post_type: 'posts', kind: 'photo',
                       posted_at: Time.now, url: 'u', protected: false, extension: 'jpg')
       Outcome.new(item:, status:, bytes:, message: nil)
     end

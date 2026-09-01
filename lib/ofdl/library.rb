@@ -8,8 +8,8 @@ module OFDL
   # because completion is an atomic rename from `.part` into place (see
   # Scratch#publish).
   #
-  #   <output_dir>/<username>/<post_type>/<date>_<post_id>_<media_id>.<ext>
-  #   <output_dir>/<username>/<post_type>/<date>_<post_id>_<media_id>.<ext>.drm
+  #   <output_dir>/<source>/<username>/<post_type>/<date>_<post_id>_<media_id>.<ext>
+  #   <output_dir>/<source>/<username>/<post_type>/<date>_<post_id>_<media_id>.<ext>.drm
   #
   # The `.drm` marker is an empty file standing in for a protected video, so a
   # rerun counts the item as present and does not queue it.
@@ -31,16 +31,16 @@ module OFDL
       raise ConfigError, root_problem
     end
 
-    def dir_for(username, post_type) = @root.join(sanitise(username), post_type.to_s)
+    def dir_for(item, username:) = @root.join(item.source, sanitise(username), item.post_type.to_s)
 
-    def path_for(item, username:) = dir_for(username, item.post_type).join(item.filename)
+    def path_for(item, username:) = dir_for(item, username:).join(item.filename)
 
-    def marker_path_for(item, username:) = dir_for(username, item.post_type).join(item.marker_filename)
+    def marker_path_for(item, username:) = dir_for(item, username:).join(item.marker_filename)
 
     # True when the item is already accounted for -- as a real file or as a
     # protected-video marker.
     def have?(item, username:)
-      keys(username, item.post_type).include?(item.key)
+      keys(item, username:).include?(item.key)
     end
 
     def size_of(item, username:)
@@ -50,11 +50,12 @@ module OFDL
     end
 
     # Returns [files, bytes]. With `only` absent, reads every creator directory
-    # and every post type under each creator directory. `only` is creator names
-    # as typed; tally folds each name with `walk_key`, so the case a name is
-    # given in need not match the directory's, and reads only those creators'
-    # directories. The count never depends on the post types a run names, or on
-    # `--since`. See Session#count_library.
+    # under every source and every post type under each creator directory.
+    # `only` is targets -- `{source:, username:}` -- with the username as typed;
+    # tally folds each with `walk_key`, so the case a name is given in need not
+    # match the directory's, and reads only those creators' directories. The
+    # count never depends on the post types a run names, or on `--since`. See
+    # Session#count_library.
     #
     # The walk makes the same per-directory listings `have?` makes one at a
     # time, so the cache the walk fills is the one a run's presence checks then
@@ -71,7 +72,7 @@ module OFDL
     # on a creator the walk has passed. Session#produce is that caller, and
     # orders its targets by the same key.
     def tally(only: nil, on_creator: nil, &progress)
-      wanted = only&.to_set { walk_key(it) }
+      wanted = only&.to_set { walk_key(it[:source], it[:username]) }
       files = bytes = 0
 
       creator_groups(wanted).each do |group|
@@ -80,14 +81,14 @@ module OFDL
           files += counted
           bytes += size
         end
-        on_creator&.call(walk_key(group.last.basename.to_s))
+        on_creator&.call(key_of(group.last))
       end
 
       [files, bytes]
     end
 
     def record(item, username:)
-      @mutex.synchronize { (@keys[[sanitise(username), item.post_type.to_s]] ||= Set.new) << item.key }
+      @mutex.synchronize { (@keys[cache_key(item.source, username, item.post_type)] ||= Set.new) << item.key }
     end
 
     def write_marker(item, username:)
@@ -124,7 +125,7 @@ module OFDL
     end
 
     def counts
-      Pathname.glob(@root.join('*', '*', '*')).each_with_object(Hash.new(0)) do |path, totals|
+      Pathname.glob(@root.join('*', '*', '*', '*')).each_with_object(Hash.new(0)) do |path, totals|
         next if path.directory?
 
         totals[path.extname == '.drm' ? :protected : :files] += 1
@@ -138,13 +139,20 @@ module OFDL
       cleaned.empty? ? 'unknown' : cleaned
     end
 
-    # The key `tally`'s walk and a caller waiting on it both order by. It folds
-    # case because a case-insensitive filesystem keeps the directory `alice`
-    # after the username became `Alice`, and two keys mean a waiter released
-    # before its directory has been read; see Watermark.
-    def walk_key(name) = sanitise(name).downcase
+    # The key `tally`'s walk and a caller waiting on it both order by. The
+    # source leads, so one source's creators are walked through before the next
+    # source's begin. It folds case because a case-insensitive filesystem keeps
+    # the directory `alice` after the username became `Alice`, and two keys mean
+    # a waiter released before its directory has been read; see Watermark.
+    def walk_key(source, name) = "#{source}/#{sanitise(name).downcase}"
 
     private
+
+    def cache_key(source, username, post_type) = [source.to_s, sanitise(username), post_type.to_s]
+
+    # <root>/<source>/<username>/, so the walk key is built from the directory
+    # and its parent.
+    def key_of(creator) = walk_key(creator.parent.basename.to_s, creator.basename.to_s)
 
     def root_problem
       return "output_dir #{@root} is not writable" if @root.directory?
@@ -157,31 +165,31 @@ module OFDL
 
     def nearest_existing_ancestor = @root.ascend.find(&:exist?) || Pathname('/')
 
-    # One directory listing per (user, post type), cached for the run.
-    def keys(username, post_type)
-      cache(username, post_type) { key_set(media_files(dir_for(username, post_type))) }
+    # One directory listing per (source, user, post type), cached for the run.
+    def keys(item, username:)
+      cache(item.source, username, item.post_type) { key_set(media_files(dir_for(item, username:))) }
     end
 
-    def cache(username, post_type)
-      @mutex.synchronize { @keys[[sanitise(username), post_type.to_s]] ||= yield }
+    def cache(source, username, post_type)
+      @mutex.synchronize { @keys[cache_key(source, username, post_type)] ||= yield }
     end
 
-    # <root>/<username>/<post_type>/, the layout at the top of this class. A
+    # <root>/<source>/<username>/, the layout at the top of this class. A
     # directory name is a sanitised username, which is what the cache is keyed
     # by. Sorted, so a walk of the tree has an order others can wait on.
     def creator_dirs(only)
       return [] unless @root.directory?
 
-      dirs = @root.children.select(&:directory?)
-      dirs = dirs.select { only.include?(walk_key(it.basename.to_s)) } if only
-      dirs.sort_by { walk_key(it.basename.to_s) }
+      dirs = @root.children.select(&:directory?).flat_map { it.children.select(&:directory?) }
+      dirs = dirs.select { only.include?(key_of(it)) } if only
+      dirs.sort_by { key_of(it) }
     end
 
     # Directories sharing a walk key -- `Alice` beside `alice`, which only a
     # case-sensitive filesystem allows -- form one group, so the key reaches
     # `on_creator` once every directory under it has been read.
     def creator_groups(only)
-      creator_dirs(only).chunk_while { |a, b| walk_key(a.basename.to_s) == walk_key(b.basename.to_s) }
+      creator_dirs(only).chunk_while { |a, b| key_of(a) == key_of(b) }
     end
 
     # The cache key stays the directory's own name: folding it would share one
@@ -189,10 +197,11 @@ module OFDL
     # directory or two is a property of the filesystem this cannot read.
     def tally_creator(creator)
       files = bytes = 0
+      source = creator.parent.basename.to_s
 
       post_type_dirs(creator).each do |dir|
         paths = media_files(dir)
-        cache(creator.basename.to_s, dir.basename.to_s) { key_set(paths) }
+        cache(source, creator.basename.to_s, dir.basename.to_s) { key_set(paths) }
         paths.each do |path|
           size = path.extname == '.drm' ? 0 : path.size
           files += 1

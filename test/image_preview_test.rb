@@ -144,7 +144,7 @@ module OFDL
     end
 
     def test_only_images_are_previewed
-      photo = Item.new(media_id: 1, post_id: 2, post_type: 'posts', kind: 'photo',
+      photo = Item.new(media_id: 1, post_id: 2, source: Source::ONLYFANS, post_type: 'posts', kind: 'photo',
                        posted_at: Time.now, url: 'u', protected: false, extension: 'jpg')
       video = photo.with(extension: 'mp4')
 

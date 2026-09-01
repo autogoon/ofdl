@@ -145,7 +145,7 @@ module OFDL
     # order is what makes wait_for_count almost always free: the walk is ahead
     # of the listing from the first creator, and stays ahead. Public because
     # the CLI announces the run in this order before archive starts.
-    def in_walk_order(targets) = targets.sort_by { library.walk_key(it[:username]) }
+    def in_walk_order(targets) = targets.sort_by { library.walk_key(it[:source], it[:username]) }
 
     def archive(targets:, post_types: @config.post_types, since: nil, skip_ads: @config.skip_ads?)
       queue = SizedQueue.new(QUEUE_DEPTH)
@@ -181,7 +181,8 @@ module OFDL
 
     # Yields each item the moment it is found. Deduplicated across post types:
     # the same media often appears in both a timeline and the paid feed.
-    def stream(user_id:, post_types:, since: nil, username: nil, seen: Set.new, skip_ads: @config.skip_ads?)
+    def stream(user_id:, post_types:, source: Source::ONLYFANS, since: nil, username: nil, seen: Set.new,
+               skip_ads: @config.skip_ads?)
       post_types.each do |post_type|
         @log.step("#{"#{username} " if username}#{post_type}")
         @stats.scanning(creator: username, step: post_type)
@@ -193,14 +194,14 @@ module OFDL
           # answer would be acted on.
           advert = skip_ads && Advert.reason(row, creator: username)
 
-          Media.from_row(row, post_type:).each do |item|
+          Media.from_row(row, source:, post_type:).each do |item|
             counts[:media] += 1
             count_discovery(item)
 
             verdict = verdict_for(item, username:, since:, seen:, advert:)
             counts[verdict] += 1
             case verdict
-            when :old then note_gap(item, username:, post_type:, since:) if counts[:old] == 1
+            when :old then note_gap(item, username:, since:) if counts[:old] == 1
             when :advert then @log.debug("#{post_type}/#{item.post_id}: advertises #{advert}, skipped")
             when :queued then yield item
             end
@@ -253,12 +254,13 @@ module OFDL
     # later run reaches them.
     #
     # Only this row is checked. A gap older than it goes unreported.
-    def note_gap(item, username:, post_type:, since:)
+    def note_gap(item, username:, since:)
       return unless username
       return if present?(item, username)
 
-      @gaps << "#{username}/#{post_type}"
-      @log.warn("  #{username}/#{post_type}: posts before #{since.strftime('%Y-%m-%d')} " \
+      gap = "#{item.source}/#{username}/#{item.post_type}"
+      @gaps << gap
+      @log.warn("  #{gap}: posts before #{since.strftime('%Y-%m-%d')} " \
                 'are not on disk -- rerun with an earlier --since')
     end
 
@@ -295,8 +297,9 @@ module OFDL
       seen = Set.new
 
       in_walk_order(targets).each do |target|
-        wait_for_count(target[:username])
-        stream(user_id: target[:id], username: target[:username], post_types:, since:, seen:, skip_ads:) do |item|
+        wait_for_count(target)
+        stream(user_id: target[:id], source: target[:source], username: target[:username],
+               post_types:, since:, seen:, skip_ads:) do |item|
           queue << [item, target[:username]]
         end
         @stats.bump(:creators_done)
@@ -311,12 +314,12 @@ module OFDL
     # The field is set only when there is a real wait: seeing it means the run
     # is held up by the disk, and it is the producer that is waiting, not the
     # whole run -- the pool keeps draining whatever is already queued.
-    def wait_for_count(username)
-      name = library.walk_key(username)
-      return if counted.passed?(name)
+    def wait_for_count(target)
+      key = library.walk_key(target[:source], target[:username])
+      return if counted.passed?(key)
 
-      @stats.scanning(creator: username, step: 'waiting for listing')
-      counted.await(name)
+      @stats.scanning(creator: target[:username], step: 'waiting for listing')
+      counted.await(key)
     end
 
     # A download that raises anything other than DownloadError would otherwise

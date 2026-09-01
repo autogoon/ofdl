@@ -125,16 +125,22 @@ nothing is downloaded twice: the listing starts again, and every item already in
 
 ## Where the files go
 
-Under `output_dir`, a directory per creator and one per post type inside it:
+Under `output_dir`, a directory per app, a directory per creator inside that,
+and one per post type inside that:
 
 ```text
-/tmp/onlyfans/someone/posts/2026-01-14_111_222.jpg
-              │       │     │          │   └ media id
-              │       │     │          └ post id
-              │       │     └ the date it was posted
-              │       └ posts, messages, stories, highlights, paid, archived
-              └ the creator's username
+/tmp/media/onlyfans/someone/posts/2026-01-14_111_222.jpg
+           │        │       │     │          │   └ media id
+           │        │       │     │          └ post id
+           │        │       │     └ the date it was posted
+           │        │       └ posts, messages, stories, highlights, paid, archived
+           │        └ the creator's username
+           └ the app the creator is on
 ```
+
+The app leads because one name can belong to two people: `onlyfans/alice` and
+`instagram/alice` are separate creators in separate directories, and neither
+run's check for what is already downloaded answers for the other.
 
 The date and the two ids are the whole name: no title, no caption, and the same
 item always lands at the same path. Those ids are also how a rerun recognises
@@ -157,7 +163,7 @@ Point it at your library and the config is complete:
 
 ```json
 {
-  "output_dir": "/tmp/onlyfans"
+  "output_dir": "/tmp/media"
 }
 ```
 
@@ -168,7 +174,7 @@ set what you actually want to control, and leave the rest out:
 
 ```json
 {
-  "output_dir": "/tmp/onlyfans",
+  "output_dir": "/tmp/media",
   "concurrency": 2,
   "post_types": ["posts", "messages"],
   "images": false

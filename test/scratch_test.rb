@@ -14,7 +14,7 @@ module OFDL
 
     def item(key: '111_222', extension: 'jpg')
       post, media = key.split('_')
-      Item.new(media_id: media, post_id: post, post_type: 'posts', kind: 'photo',
+      Item.new(media_id: media, post_id: post, source: Source::ONLYFANS, post_type: 'posts', kind: 'photo',
                posted_at: Time.utc(2026, 1, 14), url: 'https://cdn.example.com/a.jpg',
                protected: false, extension:)
     end

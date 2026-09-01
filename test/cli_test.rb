@@ -93,7 +93,8 @@ module OFDL
     def named(names) = CLI.new.send(:named_creators, names)
 
     def test_a_leading_at_is_stripped
-      assert_equal(%w[Alice BOB], named(['@Alice', 'BOB']))
+      assert_equal([{ source: 'onlyfans', username: 'Alice' }, { source: 'onlyfans', username: 'BOB' }],
+                   named(['@Alice', 'BOB']))
     end
 
     def test_no_names_scopes_nothing
@@ -116,12 +117,13 @@ module OFDL
     end
 
     def test_names_select_a_subset
-      assert_equal([{ id: 2, username: 'bob' }, { id: 1, username: 'alice' }], resolve(%w[bob alice]))
+      assert_equal([{ source: 'onlyfans', id: 2, username: 'bob' },
+                    { source: 'onlyfans', id: 1, username: 'alice' }], resolve(%w[bob alice]))
     end
 
     # See CLI#resolve_targets: a leading @ is stripped and case is ignored.
     def test_a_name_may_carry_an_at_and_any_case
-      assert_equal([{ id: 2, username: 'bob' }], resolve(['@BOB']))
+      assert_equal([{ source: 'onlyfans', id: 2, username: 'bob' }], resolve(['@BOB']))
     end
 
     def test_an_unknown_name_is_an_error

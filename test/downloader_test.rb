@@ -66,7 +66,7 @@ module OFDL
 
     def item(extension: 'jpg', key: '111_222')
       post, media = key.split('_')
-      Item.new(media_id: media, post_id: post, post_type: 'posts', kind: 'photo',
+      Item.new(media_id: media, post_id: post, source: Source::ONLYFANS, post_type: 'posts', kind: 'photo',
                posted_at: Time.utc(2026, 1, 14), url: "https://cdn.example.com/a.#{extension}",
                protected: false, extension:)
     end
@@ -81,7 +81,7 @@ module OFDL
 
       assert_equal(:downloaded, outcome.status)
       assert_equal(1234, outcome.bytes)
-      assert_path_exists(@out.join('creator', 'posts', '2026-01-14_111_222.jpg'))
+      assert_path_exists(@out.join('onlyfans', 'creator', 'posts', '2026-01-14_111_222.jpg'))
     end
 
     # See Scratch#publish for why nothing partial may appear under the final name.
@@ -157,8 +157,8 @@ module OFDL
       outcome = subject.call(item(key: '111_222'), username: 'creator', slot: 0)
 
       assert_equal(:downloaded, outcome.status, outcome.message)
-      assert_path_exists(@out.join('creator', 'posts', '2026-01-14_111_222.jpg'))
-      assert_path_exists(@out.join('creator', 'posts', '2026-01-14_111_444.jpg'))
+      assert_path_exists(@out.join('onlyfans', 'creator', 'posts', '2026-01-14_111_222.jpg'))
+      assert_path_exists(@out.join('onlyfans', 'creator', 'posts', '2026-01-14_111_444.jpg'))
     end
 
     def test_a_failed_download_leaves_nothing_behind

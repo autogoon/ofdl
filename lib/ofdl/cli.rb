@@ -204,13 +204,13 @@ module OFDL
       end
     end
 
-    # The creator names given on the command line with a leading `@` removed,
-    # or `nil` when no names were given. `nil` leaves the walk unscoped. Case
-    # is folded by Library#tally, not here.
+    # The creators named on the command line, as targets without an id, or `nil`
+    # when no names were given. `nil` leaves the walk unscoped. Case is folded
+    # by Library#tally, not here.
     def named_creators(names)
       return nil if names.empty?
 
-      names.map { it.delete_prefix('@') }
+      names.map { { source: Source::ONLYFANS, username: it.delete_prefix('@') } }
     end
 
     # Repeated below the panel because the inline warning scrolls away during a
@@ -265,8 +265,9 @@ module OFDL
       return @log.info('  use --library-stats to get full stats of your library') unless stats
 
       counts = session.library.counts
-      creators = @config.output_dir.children.select(&:directory?)
-      @log.info("  creators     #{creators.size}")
+      # <output_dir>/<source>/<creator>/, the layout at the top of Library.
+      creators = @config.output_dir.glob('*/*').count(&:directory?)
+      @log.info("  creators     #{creators}")
       @log.info("  files        #{counts[:files].to_i}  (#{human_bytes(counts[:bytes].to_i)})")
       @log.info("  protected    #{counts[:protected].to_i}  DRM, not downloadable")
     end
@@ -297,14 +298,14 @@ module OFDL
 
     # No names means every active subscription.
     def resolve_targets(names)
-      return subscriptions.map { { id: it['id'], username: it['username'] } } if names.empty?
+      return subscriptions.map { { source: Source::ONLYFANS, id: it['id'], username: it['username'] } } if names.empty?
 
       names.map do |name|
         wanted = name.delete_prefix('@').downcase
         row = subscriptions.find { it['username'].to_s.downcase == wanted }
         raise ConfigError, "not subscribed to #{name.inspect} (run `ofdl subs`)" unless row
 
-        { id: row['id'], username: row['username'] }
+        { source: Source::ONLYFANS, id: row['id'], username: row['username'] }
       end
     end
 
