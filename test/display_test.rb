@@ -144,6 +144,12 @@ module OFDL
       assert_nil(Display.cell_size(StringIO.new))
     end
 
+    def test_truncate_cuts_long_values_to_a_prefix
+      assert_equal("#{'x' * 24}...", Display.truncate('x' * 40))
+      assert_equal('short', Display.truncate('short'))
+      assert_equal('ab', Display.truncate('abcd', 2).delete_suffix('...'))
+    end
+
     def test_humanize_scales_units
       assert_equal('0 B', Display.humanize(0))
       assert_equal('1.0 KB', Display.humanize(1024))

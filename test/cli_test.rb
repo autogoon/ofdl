@@ -181,10 +181,19 @@ module OFDL
   class CLIResolveTargetsTest < TestCase
     ROWS = [{ 'id' => 1, 'username' => 'alice' }, { 'id' => 2, 'username' => 'bob' }].freeze
 
-    # subscriptions is memoised, so seeding it keeps the API out of the test.
+    # A real OnlyFans adapter with the subscription list already answered, so
+    # the resolution under test is the adapter's own.
     def resolve(names, sources: Source::ALL)
+      config = Config.new(Pathname(Dir.mktmpdir('ofdl-cli')).join('config.json'))
+      session = Session.new(config:, log: silent_log)
+      adapter = Sources::OnlyFans.new(config:, log: silent_log, stats: session.stats, transport: nil)
+      api = Object.new
+      api.define_singleton_method(:subscriptions) { ROWS }
+      adapter.instance_variable_set(:@api, api)
+      session.instance_variable_set(:@adapters, { Source::ONLYFANS => adapter })
+
       cli = CLI.new
-      cli.instance_variable_set(:@subscriptions, ROWS)
+      cli.instance_variable_set(:@session, session)
       cli.send(:resolve_targets, names, sources)
     end
 

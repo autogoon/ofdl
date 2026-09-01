@@ -115,6 +115,7 @@ module OFDL
       OptionParser.new do |o|
         o.summary_indent = '  '
         o.summary_width = 26
+        source_option(o, options)
         o.on('--library-stats', 'count the files and bytes in output_dir') { options[:library_stats] = true }
       end
     end
@@ -206,11 +207,13 @@ module OFDL
     end
 
     def cmd_fetch(argv)
-      options = { sources: Source::ALL, post_types: @config.post_types, since: nil,
+      # post_types stays nil unless asked for: the configured set can differ
+      # per app, and only Session knows which app a target is on.
+      options = { sources: Source::ALL, post_types: nil, since: nil,
                   images: @config.images?, skip_ads: @config.skip_ads? }
       fetch_parser(options).parse!(argv)
 
-      unknown = options[:post_types] - Config::POST_TYPES
+      unknown = options[:post_types].to_a - Config::POST_TYPES
       raise ConfigError, "unknown post types: #{unknown.join(', ')}" if unknown.any?
 
       # Resolution runs inside the dashboard: listing subscriptions is several
@@ -285,22 +288,26 @@ module OFDL
       raise ConfigError, 'no active subscriptions' if targets.empty?
 
       @log.info("  #{targets.size} to archive: #{targets.map { "#{it[:source]}/#{it[:username]}" }.join(', ')}")
-      @log.info("  post types: #{options[:post_types].join(', ')}")
+      @log.info("  post types: #{options[:post_types]&.join(', ') || 'as configured'}")
       targets
     end
 
     # report_session is last: it is the only part that costs a request.
     def cmd_status(argv)
-      options = { library_stats: false }
+      options = { library_stats: false, sources: Source::ALL }
       status_parser(options).parse!(argv)
 
-      StatusReport.new(config: @config, log: @log, session:).call(library_stats: options[:library_stats])
+      StatusReport.new(config: @config, log: @log, session:)
+                  .call(library_stats: options[:library_stats], sources: options[:sources])
     end
 
     # -- helpers -------------------------------------------------------------
 
-    def subscriptions
-      @subscriptions ||= session.api.subscriptions.to_a.uniq { it['id'] }
+    # Memoised per app: resolving several names must not list one app's
+    # creators once per name.
+    def creators_on(source)
+      @creators ||= {}
+      @creators[source] ||= session.adapter_for(source).creators
     end
 
     # No names means every creator on every app the run covers.
@@ -310,12 +317,6 @@ module OFDL
       names.map { resolve_name(it, sources) }
     end
 
-    def creators_on(source)
-      raise ConfigError, "no adapter for #{source}" unless source == Source::ONLYFANS
-
-      subscriptions.map { { source:, id: it['id'], username: it['username'] } }
-    end
-
     def resolve_name(name, sources)
       source, username = split_name(name)
       unless sources.include?(source)
@@ -323,10 +324,7 @@ module OFDL
         raise ConfigError, "#{name.inspect} is on #{source}, which this run does not cover (covering: #{covering})"
       end
 
-      row = subscriptions.find { it['username'].to_s.downcase == username.downcase }
-      raise ConfigError, "not subscribed to #{username.inspect} on #{source} (run `ofdl subs`)" unless row
-
-      { source:, id: row['id'], username: row['username'] }
+      session.adapter_for(source).resolve(username)
     end
 
     # The dashboard owns the terminal for the duration, so log lines are routed

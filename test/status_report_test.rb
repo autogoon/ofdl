@@ -80,20 +80,17 @@ module OFDL
       assert_match(/will not be created/, printed)
     end
 
-    def test_bytes_are_printed_in_units
-      subject = report
-      assert_equal('512 B', subject.send(:human_bytes, 512))
-      assert_equal('1.0 KB', subject.send(:human_bytes, 1024))
-      assert_equal('1.5 MB', subject.send(:human_bytes, 1024 * 1536))
-    end
+    def test_an_apps_section_is_headed_by_its_name_and_lines_up_with_the_rest
+      session = library_session
+      adapter = Object.new
+      adapter.define_singleton_method(:status_lines) { [['signed in', '@someone'], %w[cookies 7]] }
+      session.define_singleton_method(:adapter_for) { |_key| adapter }
 
-    # Session material is printed as a prefix only: enough to compare against
-    # the browser, not enough to reuse.
-    def test_long_values_are_truncated
-      subject = report
+      report(session:).sign_in('onlyfans')
 
-      assert_equal("#{'x' * 24}...", subject.send(:truncate, 'x' * 40))
-      assert_equal('short', subject.send(:truncate, 'short'))
+      assert_includes(@log.lines, 'onlyfans')
+      assert_includes(@log.lines, '  signed in    @someone')
+      assert_includes(@log.lines, '  cookies      7')
     end
   end
 end

@@ -29,9 +29,14 @@ module OFDL
 
   # Wires the pieces together and owns the run.
   #
+  # Session holds what every app shares: the transport, the library, the
+  # scratch directory, the download pool, the counters. A source adapter holds
+  # what one app does on its own: its session, its request signing, which feeds
+  # it has. There is one adapter per app; see Sources::OnlyFans.
+  #
   # Built lazily so `ofdl status` can report the environment and the library
-  # before `jar` brings up the Keychain prompt, and so an auth failure surfaces
-  # before any enumeration starts.
+  # before an adapter brings up the Keychain prompt, and so an auth failure
+  # surfaces before any enumeration starts.
   class Session
     attr_reader :config, :log, :stats
 
@@ -50,39 +55,21 @@ module OFDL
     # The dashboard, once it exists; workers draw their own previews through it.
     attr_writer :preview
 
-    def jar = @jar ||= Cookies.load(profile: @config.chrome_profile)
-
-    def rules_store = @rules_store ||= RulesStore.new(config: @config, log: @log)
-
-    def rules = @rules ||= rules_store.load
-
-    def signer = @signer ||= build_signer(rules)
-
     def transport
       @transport ||= Transport::CurlImpersonate.newest_chrome(binary: @config.curl_impersonate, log: @log)
     end
 
-    # Handed to the Client so a rejected signature can be retried with freshly
-    # fetched rules exactly once.
-    def refresh_signer!
-      @rules = rules_store.refresh!
-      @signer = build_signer(@rules)
+    # One adapter per app, built on first use. Source::ALL lists only apps that
+    # have an adapter, and every route to here resolves through it, so an
+    # unknown key is a bug rather than a configuration mistake.
+    def adapter_for(key)
+      @adapters ||= {}
+      @adapters[key] ||=
+        case key
+        when Source::ONLYFANS then Sources::OnlyFans.new(config: @config, log: @log, stats: @stats, transport:)
+        else raise Error, "no adapter for source #{key.inspect}"
+        end
     end
-
-    def site_state
-      @site_state ||= SiteState.new(transport:, auth_id: jar.auth_id, log: @log)
-    end
-
-    def client
-      @client ||= Client.new(
-        jar:, signer:, transport:, site_state:, stats: @stats,
-        rate_limiter: RateLimiter.new(@config.requests_per_second),
-        log: @log,
-        refresh_signer: -> { refresh_signer! }
-      )
-    end
-
-    def api = @api ||= Api.new(client:)
 
     def library = @library ||= Library.new(root: @config.output_dir, log: @log)
 
@@ -147,7 +134,7 @@ module OFDL
     # the CLI announces the run in this order before archive starts.
     def in_walk_order(targets) = targets.sort_by { library.walk_key(it[:source], it[:username]) }
 
-    def archive(targets:, post_types: @config.post_types, since: nil, skip_ads: @config.skip_ads?)
+    def archive(targets:, post_types: nil, since: nil, skip_ads: @config.skip_ads?)
       queue = SizedQueue.new(QUEUE_DEPTH)
       summary = Summary.empty
       tally = { done: 0, bytes: 0 }
@@ -181,20 +168,25 @@ module OFDL
 
     # Yields each item the moment it is found. Deduplicated across post types:
     # the same media often appears in both a timeline and the paid feed.
-    def stream(user_id:, post_types:, source: Source::ONLYFANS, since: nil, username: nil, seen: Set.new,
+    # The feeds asked for, or the configured set when none were, narrowed to
+    # the ones this app has; see Config::POST_TYPES.
+    def stream(user_id:, post_types: nil, source: Source::ONLYFANS, since: nil, username: nil, seen: Set.new,
                skip_ads: @config.skip_ads?)
-      post_types.each do |post_type|
+      adapter = adapter_for(source)
+      wanted = post_types || @config.post_types(source)
+
+      (wanted & adapter.post_types).each do |post_type|
         @log.step("#{"#{username} " if username}#{post_type}")
         @stats.scanning(creator: username, step: post_type)
         counts = Hash.new(0)
 
-        each_row(post_type, user_id, since:) do |row|
+        adapter.each_row(post_type, user_id, since:) do |row|
           counts[:rows] += 1
           # Read once per row rather than once per item, and only when the
           # answer would be acted on.
-          advert = skip_ads && Advert.reason(row, creator: username)
+          advert = skip_ads && adapter.advert_reason(row, creator: username)
 
-          Media.from_row(row, source:, post_type:).each do |item|
+          adapter.items_from(row, post_type:).each do |item|
             counts[:media] += 1
             count_discovery(item)
 
@@ -223,8 +215,6 @@ module OFDL
     # instead of what is waiting.
     QUEUE_DEPTH = 256
     private_constant :QUEUE_DEPTH
-
-    def build_signer(rules) = Signer.new(rules:, user_id: jar.auth_id, xbc: jar.xbc)
 
     # What becomes of one item, and the one place the order of the tests is
     # written down: the counters and the panel both follow from the answer.
@@ -328,23 +318,6 @@ module OFDL
       downloader.call(item, username:, slot:)
     rescue StandardError => e
       Outcome.new(item:, status: :failed, bytes: 0, message: "#{e.class}: #{e.message}")
-    end
-
-    def each_row(post_type, user_id, since: nil, &)
-      enumerator =
-        case post_type
-        when 'posts' then api.posts(user_id, since:)
-        when 'archived' then api.posts(user_id, archived: true, since:)
-        when 'messages' then api.messages(user_id, since:)
-        when 'paid' then api.paid(user_id, since:)
-        when 'stories' then api.stories(user_id)
-        when 'highlights' then api.highlights(user_id)
-        else raise ConfigError, "unknown post type #{post_type.inspect}"
-        end
-
-      enumerator.each(&)
-    rescue ApiError => e
-      @log.warn("#{post_type}: #{e.message} -- continuing without it")
     end
 
     # There is no total to count towards -- enumeration is still running while

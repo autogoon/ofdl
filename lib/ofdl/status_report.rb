@@ -13,55 +13,47 @@ module OFDL
       @session = session
     end
 
-    def call(library_stats: false)
+    def call(library_stats: false, sources: Source::ALL)
       environment
       library(stats: library_stats)
-      session
+      sources.each { sign_in(it) }
     end
 
     def environment
       @log.step('environment')
-      @log.info("  config       #{@config.path}")
-      @log.info("  chrome       #{Chrome.version || 'NOT FOUND'} (profile #{@config.chrome_profile.inspect})")
-      @log.info("  user-agent   #{Chrome.user_agent}#{fingerprint_note}")
-      @log.info("  transport    #{@session.transport.describe}")
-      @log.info("               #{@session.transport.version}")
-      @log.info("  ffmpeg       #{Remux.available?(@config.ffmpeg) ? 'ok' : "NOT FOUND (#{@config.ffmpeg})"}")
-      @log.info("  sips         #{Thumbnail.available? ? 'ok' : 'NOT FOUND (previews disabled)'}")
-      @log.info("  terminal     #{terminal_note}")
+      line('config', @config.path)
+      line('chrome', "#{Chrome.version || 'NOT FOUND'} (profile #{@config.chrome_profile.inspect})")
+      line('user-agent', "#{Chrome.user_agent}#{fingerprint_note}")
+      line('transport', @session.transport.describe)
+      line('', @session.transport.version)
+      line('ffmpeg', Remux.available?(@config.ffmpeg) ? 'ok' : "NOT FOUND (#{@config.ffmpeg})")
+      line('sips', Thumbnail.available? ? 'ok' : 'NOT FOUND (previews disabled)')
+      line('terminal', terminal_note)
     end
 
     def library(stats: false)
       @log.step('library')
-      @log.info("  output_dir   #{@config.output_dir} #{output_dir_state}")
+      line('output_dir', "#{@config.output_dir} #{output_dir_state}")
       return unless @config.output_dir.directory?
       return @log.info('  use --library-stats to get full stats of your library') unless stats
 
       counts = @session.library.counts
-      @log.info("  creators     #{creator_count}")
-      @log.info("  files        #{counts[:files].to_i}  (#{human_bytes(counts[:bytes].to_i)})")
-      @log.info("  protected    #{counts[:protected].to_i}  DRM, not downloadable")
+      line('creators', creator_count)
+      line('files', "#{counts[:files].to_i}  (#{Display.humanize(counts[:bytes].to_i)})")
+      line('protected', "#{counts[:protected].to_i}  DRM, not downloadable")
     end
 
-    def session
-      @log.step('session')
-      jar = @session.jar
-      @log.info("  cookies      #{jar.values.size} for onlyfans.com (#{jar.values.keys.sort.join(', ')})")
-      @log.info("  auth_id      #{jar.auth_id}")
-      @log.info("  x-bc         #{truncate(jar.xbc)}")
-
-      rules = @session.rules
-      @log.info("  rules        static_param #{truncate(rules.static_param)}, " \
-                "#{rules.checksum_indexes.size} checksum indexes")
-
-      me = @session.api.me
-      username = me['username'] || me['name']
-      raise ApiError, "authenticated, but /users/me returned no username: #{me.inspect}" unless username
-
-      @log.info("  signed in    @#{username} (id #{me['id']}), #{me['subscribesCount']} subscriptions")
+    # One section per app, each headed by the app's name, because a run can
+    # cover more than one and each has its own session to prove.
+    def sign_in(key)
+      @log.step(key)
+      @session.adapter_for(key).status_lines.each { |label, value| line(label, value) }
     end
 
     private
+
+    # The label column, so an adapter supplying a pair need not know its width.
+    def line(label, value) = @log.info(format('  %-13s%s', label, value))
 
     # <output_dir>/<source>/<creator>/, the layout at the top of Library, so a
     # source directory on its own is not a creator.
@@ -93,23 +85,6 @@ module OFDL
       "#{columns}x#{rows} cells, #{cell[0]}x#{cell[1]} px each"
     rescue StandardError
       'not a terminal'
-    end
-
-    # Session material is printed as a prefix: enough to compare against the
-    # browser, not enough to reuse.
-    def truncate(value, length = 24)
-      string = value.to_s
-      string.length > length ? "#{string[0, length]}..." : string
-    end
-
-    def human_bytes(bytes)
-      units = %w[B KB MB GB TB]
-      size = bytes.to_f
-      units.each_with_index do |name, index|
-        return format(index.zero? ? '%d %s' : '%.1f %s', size, name) if size < 1024 || index == units.size - 1
-
-        size /= 1024
-      end
     end
   end
 end

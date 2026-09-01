@@ -86,17 +86,26 @@ module OFDL
     def streaming_session(api, signal)
       config = Config.new(Pathname(Dir.mktmpdir).join('ofdl-config.json'))
       session = Session.new(config:, log: silent_log)
-      session.instance_variable_set(:@api, api)
+      install_api(session, api)
       session.instance_variable_set(:@downloader, SignallingDownloader.new(signal))
       session.instance_variable_set(:@library, FakeLibrary.new)
       session
     end
 
+    # Installs an Api into the OnlyFans adapter this session uses.
+    def install_api(session, api)
+      adapter = Sources::OnlyFans.new(config: session.config, log: silent_log, stats: session.stats, transport: nil)
+      adapter.instance_variable_set(:@api, api)
+      session.instance_variable_set(:@adapters, { Source::ONLYFANS => adapter })
+      session
+    end
+
+    # A real OnlyFans adapter with only its Api replaced, so a test exercises
+    # the adapter's each_row, items_from and advert_reason rather than stubs of
+    # them.
     def session_with(by_post_type)
       config = Config.new(Pathname(Dir.mktmpdir).join('ofdl.config.json'))
-      session = Session.new(config:, log: silent_log)
-      session.instance_variable_set(:@api, FakeApi.new(by_post_type))
-      session
+      install_api(Session.new(config:, log: silent_log), FakeApi.new(by_post_type))
     end
 
     def advert_row(post_id, media_id, text)
@@ -290,8 +299,7 @@ module OFDL
         Outcome.new(item:, status: :downloaded, bytes: 1, message: nil)
       end
 
-      session = session_with({})
-      session.instance_variable_set(:@api, api)
+      session = install_api(session_with({}), api)
       session.instance_variable_set(:@downloader, blocking)
       session.instance_variable_set(:@library, FakeLibrary.new)
 
