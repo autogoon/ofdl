@@ -27,6 +27,7 @@ require_relative 'ofdl/stats'
 require_relative 'ofdl/progress_bar'
 require_relative 'ofdl/dashboard'
 require_relative 'ofdl/session'
+require_relative 'ofdl/status_report'
 require_relative 'ofdl/cli'
 
 # Local archiver for OnlyFans subscriptions.
