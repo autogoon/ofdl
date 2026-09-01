@@ -111,12 +111,18 @@ ofdl fetch someone other                   # several creators
 ofdl fetch someone --since 2026-01-01      # only recent posts
 ofdl fetch --post-types posts,messages     # everything, narrowed
 ofdl fetch someone --include-ads           # keep the posts advertising others
+ofdl fetch onlyfans/someone                # name the app the creator is on
+ofdl fetch --source of                     # every creator on one app
+ofdl subs --source of                      # the same filter, on subs
 ofdl --help                                # every command and option
 ```
 
-A name may be given with or without a leading `@`, and case is ignored; it is
-matched against `ofdl subs`, and an unknown name is an error rather than a
-silent skip.
+A name may carry the app the creator is on — `onlyfans/someone`, or `of/someone`
+— and without one means `onlyfans`. `ofdl subs` prints names in that form, so a
+line can be copied straight onto a `fetch`.
+
+A name may also carry a leading `@`, and case is ignored; it is matched against
+`ofdl subs`, and an unknown name is an error rather than a silent skip.
 
 Ctrl-C stops immediately. The stats panel is printed once more, the scratch
 directory is removed, and nothing partially downloaded is kept. Rerun and

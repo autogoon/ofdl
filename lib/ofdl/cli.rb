@@ -13,7 +13,7 @@ module OFDL
       'init' => ['', 'write a starter ~/.ofdl-config.json'],
       'subs' => ['', 'list active subscriptions'],
       'status' => ['', 'check the tools, the library, and that the session authenticates'],
-      'fetch' => ['[username ...]', 'download media; with no name, every active subscription']
+      'fetch' => ['[creator ...]', 'download media; with no name, every active subscription']
     }.freeze
 
     def self.start(argv) = new.run(argv)
@@ -67,12 +67,7 @@ module OFDL
         COMMANDS.each do |name, (args, description)|
           o.separator(format('  %-21s %s', "#{name} #{args}".rstrip, description))
         end
-        o.separator('')
-        o.separator('status options:')
-        status_parser({}).summarize { |line| o.separator(line.chomp) }
-        o.separator('')
-        o.separator('fetch options:')
-        fetch_parser({}).summarize { |line| o.separator(line.chomp) }
+        option_sections(o)
         o.separator('')
         o.separator('global options:')
         o.on('-v', '--verbose', 'debug logging') { options[:verbose] = true }
@@ -85,17 +80,31 @@ module OFDL
       end
     end
 
+    # One section per command that takes options, each rendered from the parser
+    # that reads them, so an option cannot appear in one and not the other.
+    def option_sections(parser)
+      { 'subs' => subs_parser({}), 'status' => status_parser({}), 'fetch' => fetch_parser({}) }
+        .each do |command, sub|
+          parser.separator('')
+          parser.separator("#{command} options:")
+          sub.summarize { |line| parser.separator(line.chomp) }
+        end
+    end
+
     # Everything below the option lists: how a name is matched, and worked
     # examples of the one command that takes arguments.
     USAGE_FOOTER = [
       '',
-      'A creator name may carry a leading @ and is matched without regard to case',
-      'against `ofdl subs`. An unknown name is an error, not a silent skip.',
+      'A creator name may carry the app it is on -- onlyfans/alice, of/alice -- and',
+      'without one means onlyfans. It may carry a leading @ and is matched without',
+      'regard to case against `ofdl subs`. An unknown name is an error, not a silent',
+      'skip.',
       '',
       'examples:',
       '  ofdl fetch                           every active subscription',
-      '  ofdl fetch alice bob                 two creators, configured post types',
+      '  ofdl fetch alice of/bob              two creators, configured post types',
       '  ofdl fetch alice --post-types posts  one creator, one post type',
+      '  ofdl fetch --source of               every creator on one app',
       '  ofdl fetch --since 2026-01-01        everything posted on or after a date'
     ].freeze
     private_constant :USAGE_FOOTER
@@ -110,12 +119,34 @@ module OFDL
       end
     end
 
+    # `subs` and `fetch` both take it, so it is defined once and added to both.
+    def source_option(parser, options)
+      parser.on('--source app,...', Array, 'narrow to some of the apps; defaults to all of',
+                Source::ALL.join(', ')) { options[:sources] = resolve_sources(it) }
+    end
+
+    def resolve_sources(names)
+      names.map do |name|
+        Source.resolve(name) or
+          raise ConfigError, "unknown app #{name.inspect} (known: #{Source::ALL.join(', ')})"
+      end
+    end
+
+    def subs_parser(options)
+      OptionParser.new do |o|
+        o.summary_indent = '  '
+        o.summary_width = 26
+        source_option(o, options)
+      end
+    end
+
     # Defines the fetch options; the usage screen renders them, so this carries
     # no banner of its own.
     def fetch_parser(options)
       OptionParser.new do |o|
         o.summary_indent = '  '
         o.summary_width = 26
+        source_option(o, options)
         o.on('--post-types type,...', Array, 'narrow to some of the post types; defaults to all of',
              Config::POST_TYPES.join(', ')) { options[:post_types] = it }
         o.on('--since DATE', 'only media posted on or after DATE (YYYY-MM-DD)') { options[:since] = parse_date(it) }
@@ -156,22 +187,27 @@ module OFDL
       @log.info('the full list is in the README under Configuration')
     end
 
-    def cmd_subs(_argv)
-      rows = subscriptions
+    # Each row is printed in the form `fetch` takes, so a name can be copied
+    # from here straight onto a command line.
+    def cmd_subs(argv)
+      options = { sources: Source::ALL }
+      subs_parser(options).parse!(argv)
+
+      rows = resolve_targets([], options[:sources])
       if rows.empty?
         @log.info('no active subscriptions')
         return
       end
 
-      width = rows.map { |r| r['username'].to_s.length }.max
-      rows.sort_by { |r| r['username'].to_s.downcase }.each do |row|
-        puts(format("%-#{width}s  %s", row['username'], row['id']))
-      end
+      names = rows.to_h { [it, "#{it[:source]}/#{it[:username]}"] }
+      width = names.values.map(&:length).max
+      rows.sort_by { names[it].downcase }.each { puts(format("%-#{width}s  %s", names[it], it[:id])) }
       @log.info("#{rows.size} active #{rows.size == 1 ? 'subscription' : 'subscriptions'}")
     end
 
     def cmd_fetch(argv)
-      options = { post_types: @config.post_types, since: nil, images: @config.images?, skip_ads: @config.skip_ads? }
+      options = { sources: Source::ALL, post_types: @config.post_types, since: nil,
+                  images: @config.images?, skip_ads: @config.skip_ads? }
       fetch_parser(options).parse!(argv)
 
       unknown = options[:post_types] - Config::POST_TYPES
@@ -210,7 +246,24 @@ module OFDL
     def named_creators(names)
       return nil if names.empty?
 
-      names.map { { source: Source::ONLYFANS, username: it.delete_prefix('@') } }
+      names.map { split_name(it).then { |source, username| { source:, username: } } }
+    end
+
+    # `alice`, `onlyfans/alice`, `of/@Alice`. Returns [source, username]. The @
+    # belongs to the creator name, so it comes off after the prefix.
+    #
+    # An unresolvable prefix raises rather than being taken as part of a
+    # username: a name that reached the subscription lookup with a slash in it
+    # could only ever fail to match, and would say so in terms of the wrong
+    # thing.
+    def split_name(name)
+      prefix, rest = name.split('/', 2)
+      return [Source::DEFAULT, name.delete_prefix('@')] if rest.nil?
+
+      source = Source.resolve(prefix) or
+        raise ConfigError, "unknown app #{prefix.inspect} in #{name.inspect} (known: #{Source::ALL.join(', ')})"
+
+      [source, rest.delete_prefix('@')]
     end
 
     # Repeated below the panel because the inline warning scrolls away during a
@@ -228,10 +281,10 @@ module OFDL
       @log.step('resolving subscriptions')
       session.stats.scanning(creator: nil, step: 'subscriptions')
 
-      targets = session.in_walk_order(resolve_targets(argv))
+      targets = session.in_walk_order(resolve_targets(argv, options[:sources]))
       raise ConfigError, 'no active subscriptions' if targets.empty?
 
-      @log.info("  #{targets.size} to archive: #{targets.map { it[:username] }.join(', ')}")
+      @log.info("  #{targets.size} to archive: #{targets.map { "#{it[:source]}/#{it[:username]}" }.join(', ')}")
       @log.info("  post types: #{options[:post_types].join(', ')}")
       targets
     end
@@ -296,17 +349,30 @@ module OFDL
       @subscriptions ||= session.api.subscriptions.to_a.uniq { it['id'] }
     end
 
-    # No names means every active subscription.
-    def resolve_targets(names)
-      return subscriptions.map { { source: Source::ONLYFANS, id: it['id'], username: it['username'] } } if names.empty?
+    # No names means every creator on every app the run covers.
+    def resolve_targets(names, sources)
+      return sources.flat_map { creators_on(it) } if names.empty?
 
-      names.map do |name|
-        wanted = name.delete_prefix('@').downcase
-        row = subscriptions.find { it['username'].to_s.downcase == wanted }
-        raise ConfigError, "not subscribed to #{name.inspect} (run `ofdl subs`)" unless row
+      names.map { resolve_name(it, sources) }
+    end
 
-        { source: Source::ONLYFANS, id: row['id'], username: row['username'] }
+    def creators_on(source)
+      raise ConfigError, "no adapter for #{source}" unless source == Source::ONLYFANS
+
+      subscriptions.map { { source:, id: it['id'], username: it['username'] } }
+    end
+
+    def resolve_name(name, sources)
+      source, username = split_name(name)
+      unless sources.include?(source)
+        covering = sources.empty? ? 'nothing' : sources.join(', ')
+        raise ConfigError, "#{name.inspect} is on #{source}, which this run does not cover (covering: #{covering})"
       end
+
+      row = subscriptions.find { it['username'].to_s.downcase == username.downcase }
+      raise ConfigError, "not subscribed to #{username.inspect} on #{source} (run `ofdl subs`)" unless row
+
+      { source:, id: row['id'], username: row['username'] }
     end
 
     # The dashboard owns the terminal for the duration, so log lines are routed
