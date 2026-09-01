@@ -199,6 +199,30 @@ module OFDL
       assert_equal(%w[onlyfans/alice onlyfans/carol], seen)
     end
 
+    # One media item can produce two files -- a reel is a video and its
+    # thumbnail -- and they need different keys or the second is taken for a
+    # duplicate of the first; see Session#verdict_for.
+    def test_a_role_suffix_makes_a_second_file_from_one_media_id
+      video = item(media_id: 900, extension: 'mp4')
+      thumb = item(media_id: '900_thumb', extension: 'jpg')
+
+      @library.prepare(video, username: 'creator').write('12345')
+
+      refute_equal(video.key, thumb.key)
+      assert(@library.have?(video, username: 'creator'))
+      refute(@library.have?(thumb, username: 'creator'))
+    end
+
+    def test_a_role_suffixed_file_is_read_back_as_present
+      thumb = item(media_id: '900_thumb', extension: 'jpg')
+      @library.prepare(thumb, username: 'creator').write('12345')
+
+      fresh = Library.new(root: @dir, log: silent_log)
+
+      assert(fresh.have?(thumb, username: 'creator'))
+      assert_path_exists(File.join(@dir, 'onlyfans', 'creator', 'posts', '2026-01-14_111_900_thumb.jpg'))
+    end
+
     def test_tally_of_an_empty_library_is_zero
       assert_equal([0, 0], @library.tally)
     end

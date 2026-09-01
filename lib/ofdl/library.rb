@@ -230,13 +230,21 @@ module OFDL
     end
 
     # "2026-01-14_1234_5678.mp4" and "...mp4.drm" both yield "1234_5678".
+    #
+    # A media id may carry a role -- "5678_thumb" -- because one media item can
+    # produce two files, as a reel produces a video and its thumbnail. The two
+    # need separate keys or the second is taken for a duplicate of the first;
+    # see Session#verdict_for. MEDIA_ID matches the role too, so key_from
+    # returns the key Item#key built the filename from.
+    MEDIA_ID = /\A\d+(?:_[a-z]+)?/
+    private_constant :MEDIA_ID
+
     def key_from(basename)
       parts = basename.split('_', 3)
       return nil unless parts.size == 3
 
       post_id = parts[1]
-      rest = parts[2]
-      media_id = rest[/\A\d+/]
+      media_id = parts[2][MEDIA_ID]
       return nil unless post_id.match?(/\A\d+\z/) && media_id
 
       "#{post_id}_#{media_id}"
