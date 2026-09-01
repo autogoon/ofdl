@@ -28,7 +28,10 @@ module OFDL
       Transport::Response.new(status:, content_type: 'application/json', body:)
     end
 
-    def jar = Cookies::Jar.new(values: { 'sess' => 's', 'auth_id' => '42', 'fp' => 'f' })
+    def jar
+      Cookies::Jar.new(values: { 'sess' => 's', 'auth_id' => '42', 'fp' => 'f' },
+                       site: Sources::OnlyFans::COOKIES)
+    end
 
     def signer_for(param) = Signer.new(rules: sample_rules.with(static_param: param), user_id: '42', xbc: 'f')
 

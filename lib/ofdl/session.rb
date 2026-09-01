@@ -173,36 +173,16 @@ module OFDL
     def stream(user_id:, post_types: nil, source: Source::ONLYFANS, since: nil, username: nil, seen: Set.new,
                skip_ads: @config.skip_ads?)
       adapter = adapter_for(source)
-      wanted = post_types || @config.post_types(source)
+      wanted = (post_types || @config.post_types(source)) & adapter.post_types
+      counts = Hash.new { |types, type| types[type] = Hash.new(0) }
+      listing = nil
 
-      (wanted & adapter.post_types).each do |post_type|
-        @log.step("#{"#{username} " if username}#{post_type}")
-        @stats.scanning(creator: username, step: post_type)
-        counts = Hash.new(0)
-
-        adapter.each_row(post_type, user_id, since:) do |row|
-          counts[:rows] += 1
-          # Read once per row rather than once per item, and only when the
-          # answer would be acted on.
-          advert = skip_ads && adapter.advert_reason(row, creator: username)
-
-          adapter.items_from(row, post_type:).each do |item|
-            counts[:media] += 1
-            count_discovery(item)
-
-            verdict = verdict_for(item, username:, since:, seen:, advert:)
-            counts[verdict] += 1
-            case verdict
-            when :old then note_gap(item, username:, since:) if counts[:old] == 1
-            when :advert then @log.debug("#{post_type}/#{item.post_id}: advertises #{advert}, skipped")
-            when :queued then yield item
-            end
-          end
-        end
-
-        @log.info("  #{counts[:rows]} rows, #{counts[:media]} media, " \
-                  "#{counts[:queued]} queued#{tail_note(counts)}")
+      adapter.each_row(wanted, user_id, since:) do |post_type, row|
+        listing = announce(post_type, username:, first: counts[post_type][:rows].zero?) if post_type != listing
+        take_row(row, post_type:, adapter:, counts: counts[post_type], username:, since:, seen:, skip_ads:) { yield it }
       end
+
+      counts.each { |post_type, tally| log_listing(post_type, tally) }
     end
 
     private
@@ -215,6 +195,43 @@ module OFDL
     # instead of what is waiting.
     QUEUE_DEPTH = 256
     private_constant :QUEUE_DEPTH
+
+    # One listing can carry two post types -- an Instagram timeline holds reels
+    # beside plain posts -- so the panel's step is set from each row rather
+    # than once per feed. The log line is written the first time a post type
+    # appears, not every time the rows switch back to it.
+    #
+    # Returns the post type, which the caller compares against the next row's.
+    def announce(post_type, username:, first:)
+      @log.step("#{"#{username} " if username}#{post_type}") if first
+      @stats.scanning(creator: username, step: post_type)
+      post_type
+    end
+
+    def log_listing(post_type, tally)
+      @log.info("  #{post_type}: #{tally[:rows]} rows, #{tally[:media]} media, " \
+                "#{tally[:queued]} queued#{tail_note(tally)}")
+    end
+
+    def take_row(row, post_type:, adapter:, counts:, username:, since:, seen:, skip_ads:)
+      counts[:rows] += 1
+      # Read once per row rather than once per item, and only when the answer
+      # would be acted on.
+      advert = skip_ads && adapter.advert_reason(row, creator: username)
+
+      adapter.items_from(row, post_type:).each do |item|
+        counts[:media] += 1
+        count_discovery(item)
+
+        verdict = verdict_for(item, username:, since:, seen:, advert:)
+        counts[verdict] += 1
+        case verdict
+        when :old then note_gap(item, username:, since:) if counts[:old] == 1
+        when :advert then @log.debug("#{post_type}/#{item.post_id}: advertises #{advert}, skipped")
+        when :queued then yield item
+        end
+      end
+    end
 
     # What becomes of one item, and the one place the order of the tests is
     # written down: the counters and the panel both follow from the answer.

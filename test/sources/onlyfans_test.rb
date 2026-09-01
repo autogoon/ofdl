@@ -68,9 +68,20 @@ module OFDL
       # each feed carries.
       def test_each_post_type_reaches_its_own_endpoint
         subject = source
-        %w[posts archived messages paid stories highlights].each { subject.each_row(it, 7) { nil } }
+        subject.each_row(%w[posts archived messages paid stories highlights], 7) { nil }
 
         assert_equal(%w[posts archived messages paid stories highlights], subject.api.asked.map(&:first))
+      end
+
+      # One listing per post type here, so every row carries the post type it
+      # was asked for.
+      def test_rows_are_tagged_with_the_post_type_they_came_from
+        subject = source('posts' => [row(1, 10)], 'messages' => [row(2, 20)])
+
+        seen = []
+        subject.each_row(%w[posts messages], 7) { |post_type, r| seen << [post_type, r['id']] }
+
+        assert_equal([['posts', 1], ['messages', 2]], seen)
       end
 
       # Only the feeds ordered newest-first can stop early on it; see
@@ -78,7 +89,7 @@ module OFDL
       def test_since_reaches_the_feeds_that_can_stop_on_it
         subject = source
         since = Time.utc(2026, 1, 1)
-        %w[posts messages paid stories highlights].each { subject.each_row(it, 7, since:) { nil } }
+        subject.each_row(%w[posts messages paid stories highlights], 7, since:) { nil }
 
         carried = subject.api.asked.to_h { [it.first, it.last] }
 
@@ -90,19 +101,17 @@ module OFDL
       end
 
       def test_an_unknown_post_type_is_an_error
-        assert_raises(ConfigError) { source.each_row('nonsense', 7) { nil } }
+        assert_raises(ConfigError) { source.each_row(%w[nonsense], 7) { nil } }
       end
 
-      # A feed that fails does not end the run: the others still have media in
-      # them.
-      def test_a_failing_feed_is_logged_and_skipped
-        subject = source
+      def test_a_failing_feed_is_skipped_and_the_rest_still_walked
+        subject = source('messages' => [row(2, 20)])
         subject.api.define_singleton_method(:posts) { |*, **| raise ApiError, 'HTTP 500' }
 
         seen = []
-        subject.each_row('posts', 7) { seen << it }
+        subject.each_row(%w[posts messages], 7) { |post_type, _row| seen << post_type }
 
-        assert_empty(seen)
+        assert_equal(%w[messages], seen)
       end
 
       def test_items_carry_the_onlyfans_source
