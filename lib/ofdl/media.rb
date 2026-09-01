@@ -10,7 +10,7 @@ module OFDL
   # defined inside a block.
   IMAGE_EXTENSIONS = %w[jpg jpeg png gif webp].freeze
 
-  Item = Data.define(:media_id, :post_id, :source, :kind, :posted_at, :url, :protected, :extension, :size) do
+  Item = Data.define(:media_id, :post_id, :post_type, :kind, :posted_at, :url, :protected, :extension, :size) do
     # `size` gives a progress bar its denominator. OnlyFans leaves
     # `files.full.size` empty on most media, so it defaults to zero and the
     # total comes from the response's Content-Length instead.
@@ -51,12 +51,12 @@ module OFDL
     class << self
       # Rows the account cannot view are dropped: they are locked posts, not
       # failures.
-      def from_row(row, source:)
+      def from_row(row, post_type:)
         return [] unless row.is_a?(Hash)
         return [] if row['canViewMedia'] == false
 
         posted_at = timestamp(row)
-        Array(row['media']).filter_map { |media| from_media(media, row:, source:, posted_at:) }
+        Array(row['media']).filter_map { |media| from_media(media, row:, post_type:, posted_at:) }
       end
 
       # When a row was posted. Public because Api stops paging on it; see
@@ -65,7 +65,7 @@ module OFDL
 
       private
 
-      def from_media(media, row:, source:, posted_at:)
+      def from_media(media, row:, post_type:, posted_at:)
         return nil unless media.is_a?(Hash)
         return nil if media['canView'] == false
 
@@ -78,7 +78,7 @@ module OFDL
         Item.new(
           media_id: media['id'],
           post_id: row['id'],
-          source:,
+          post_type:,
           kind: kind.empty? ? 'unknown' : kind,
           posted_at:,
           url:,

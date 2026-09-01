@@ -105,11 +105,11 @@ not come back. Cancel it and the run stops with
 ofdl status                                # setup, output_dir, and session check
 ofdl status --library-stats                # also count the files in output_dir
 ofdl subs                                  # who you are subscribed to
-ofdl fetch                                 # every subscription, configured sources
+ofdl fetch                                 # every subscription, configured post types
 ofdl fetch someone                         # one creator
 ofdl fetch someone other                   # several creators
 ofdl fetch someone --since 2026-01-01      # only recent posts
-ofdl fetch --sources posts,messages        # everything, narrowed
+ofdl fetch --post-types posts,messages     # everything, narrowed
 ofdl fetch someone --include-ads           # keep the posts advertising others
 ofdl --help                                # every command and option
 ```
@@ -125,7 +125,7 @@ nothing is downloaded twice: the listing starts again, and every item already in
 
 ## Where the files go
 
-Under `output_dir`, a directory per creator and one per source inside it:
+Under `output_dir`, a directory per creator and one per post type inside it:
 
 ```text
 /tmp/onlyfans/someone/posts/2026-01-14_111_222.jpg
@@ -170,7 +170,7 @@ set what you actually want to control, and leave the rest out:
 {
   "output_dir": "/tmp/onlyfans",
   "concurrency": 2,
-  "sources": ["posts", "messages"],
+  "post_types": ["posts", "messages"],
   "images": false
 }
 ```
@@ -187,7 +187,7 @@ If the file is unreadable, or isn't a JSON object, ofdl says so and stops.
 | `rules_url`           | `https://r2.hlsdownloader.com/win32/dynamicRules.json` | where to refetch signing parameters                    |
 | `rules_file`          | unset                                                  | pinned local rules; disables `rules_url`               |
 | `rules`               | written automatically                                  | cached signing parameters                              |
-| `sources`             | all six                                                | `posts, messages, stories, highlights, paid, archived` |
+| `post_types`          | all six                                                | `posts, messages, stories, highlights, paid, archived` |
 | `skip_protected`      | `true`                                                 | skip Widevine video                                    |
 | `mark_protected`      | `true`                                                 | leave `.drm` markers                                   |
 | `skip_ads`            | `true`                                                 | skip posts advertising another creator                 |
@@ -220,9 +220,9 @@ Three columns, each read downward.
 
 - `creators` — creators finished scanning, over the total, then the one being
   listed.
-- `scanning` — the step running: `subscriptions`, then the source being listed.
-  Reads `waiting for listing` while listing is held up by the count of
-  `output_dir`, and `done` when there's nothing left to list.
+- `scanning` — the step running: `subscriptions`, then the post type being
+  listed. The field reads `waiting for listing` while listing is held up by the
+  count of `output_dir`, and `done` when there's nothing left to list.
 - `requests` — API calls made.
 - `discovered` — media found, as images / videos.
 

@@ -157,7 +157,7 @@ module OFDL
         *rows_from(
           [
             field('creators', creators, :cyan),
-            field('scanning', @stats.source || '-', :cyan),
+            field('scanning', @stats.step || '-', :cyan),
             field('requests', number(counts[:requests])),
             field('discovered', "#{number(counts[:images])} images / #{number(counts[:videos])} videos")
           ],
@@ -237,12 +237,12 @@ module OFDL
       ].join('  ')
     end
 
-    # <creator>/<source>/<file>, the library layout. The row carries the creator
-    # because the pool interleaves them: the header names the creator being
-    # scanned, which is ahead of the one this slot is fetching.
+    # <creator>/<post_type>/<file>, the library layout. The row carries the
+    # creator because the pool interleaves creators: the header names the
+    # creator being scanned, which is ahead of the one this slot is fetching.
     def target(entry)
       [entry[:creator] && Palette.blue(entry[:creator]),
-       entry[:source] && Palette.cyan(entry[:source]),
+       entry[:post_type] && Palette.cyan(entry[:post_type]),
        Palette.cyan(entry[:filename].to_s)].compact.join('/')
     end
 

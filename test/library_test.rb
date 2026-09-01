@@ -13,7 +13,7 @@ module OFDL
 
     def item(media_id: 222, extension: 'jpg', protected: false)
       Item.new(
-        media_id:, post_id: 111, source: 'posts', kind: 'photo',
+        media_id:, post_id: 111, post_type: 'posts', kind: 'photo',
         posted_at: Time.utc(2026, 1, 14), url: 'https://cdn.example.com/a.jpg',
         protected:, extension:
       )
@@ -116,12 +116,12 @@ module OFDL
     end
 
     # The count behind `on disk`; see Session#count_library. Every creator and
-    # every source when `only` is absent. A marker counts as a file and adds no
-    # bytes.
+    # every post type when `only` is absent. A marker counts as a file and adds
+    # no bytes.
     def test_tally_covers_the_whole_tree
       @library.prepare(item, username: 'creator').write('12345')
       @library.write_marker(item(media_id: 333, extension: 'mpd', protected: true), username: 'creator')
-      @library.prepare(item(media_id: 444).with(source: 'messages'), username: 'creator').write('67')
+      @library.prepare(item(media_id: 444).with(post_type: 'messages'), username: 'creator').write('67')
       @library.prepare(item(media_id: 555), username: 'another').write('89')
 
       assert_equal([4, 9], @library.tally)

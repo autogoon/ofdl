@@ -48,10 +48,10 @@ module OFDL
       refute(Pathname(Config::OUTPUT_DIR_PLACEHOLDER).exist?)
     end
 
-    def test_rejects_unknown_sources
-      error = assert_raises(ConfigError) { Config.new(write({ 'sources' => %w[posts nonsense] })) }
+    def test_rejects_unknown_post_types
+      error = assert_raises(ConfigError) { Config.new(write({ 'post_types' => %w[posts nonsense] })) }
 
-      assert_match(/unknown sources: nonsense/, error.message)
+      assert_match(/unknown post types: nonsense/, error.message)
     end
 
     def test_rejects_nonsense_concurrency

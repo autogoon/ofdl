@@ -33,12 +33,12 @@ module OFDL
   # Shared by the two session test classes: an API returning canned rows, a
   # Library over a root that does not exist, and sessions wired to both.
   module SessionFakes
-    FakeApi = Struct.new(:by_source) do
-      def posts(_id, archived: false, since: nil) = by_source.fetch(archived ? 'archived' : 'posts', [])
-      def messages(_id, since: nil) = by_source.fetch('messages', [])
-      def stories(_id) = by_source.fetch('stories', [])
-      def paid(_id, since: nil) = by_source.fetch('paid', [])
-      def highlights(_id) = by_source.fetch('highlights', [])
+    FakeApi = Struct.new(:by_post_type) do
+      def posts(_id, archived: false, since: nil) = by_post_type.fetch(archived ? 'archived' : 'posts', [])
+      def messages(_id, since: nil) = by_post_type.fetch('messages', [])
+      def stories(_id) = by_post_type.fetch('stories', [])
+      def paid(_id, since: nil) = by_post_type.fetch('paid', [])
+      def highlights(_id) = by_post_type.fetch('highlights', [])
     end
 
     def row(post_id, media_id, posted_at)
@@ -63,7 +63,7 @@ module OFDL
     # Blocks until the producer is held at the watermark rather than sleeping a
     # fixed time, so the test is not paced by the machine it runs on.
     def await_wait(session)
-      Timeout.timeout(5) { sleep(0.001) until session.stats.source == 'waiting for listing' }
+      Timeout.timeout(5) { sleep(0.001) until session.stats.step == 'waiting for listing' }
     end
 
     # The real Library over a root that does not exist: nothing is present and
@@ -92,10 +92,10 @@ module OFDL
       session
     end
 
-    def session_with(by_source)
+    def session_with(by_post_type)
       config = Config.new(Pathname(Dir.mktmpdir).join('ofdl.config.json'))
       session = Session.new(config:, log: silent_log)
-      session.instance_variable_set(:@api, FakeApi.new(by_source))
+      session.instance_variable_set(:@api, FakeApi.new(by_post_type))
       session
     end
 
@@ -106,8 +106,8 @@ module OFDL
     # Passing a username makes the producer consult the library, so these tests
     # supply a Library over a root that does not exist. The test config sets no
     # output_dir, so the real Library cannot be built.
-    def scanning_session(by_source)
-      session_with(by_source).tap { it.instance_variable_set(:@library, FakeLibrary.new) }
+    def scanning_session(by_post_type)
+      session_with(by_post_type).tap { it.instance_variable_set(:@library, FakeLibrary.new) }
     end
   end
 
@@ -118,7 +118,7 @@ module OFDL
       session = scanning_session({ 'posts' => [row(1, 10, '2026-01-14T00:00:00Z'),
                                                advert_row(2, 20, 'go see @bob')] })
 
-      items = collect_from(session, user_id: 1, sources: %w[posts], username: 'alice')
+      items = collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice')
 
       assert_equal(['1_10'], items.map(&:key))
       assert_equal(1, session.stats.ads)
@@ -130,7 +130,7 @@ module OFDL
     def test_the_creator_being_scanned_is_who_their_own_handle_is_measured_against
       session = scanning_session({ 'posts' => [advert_row(1, 10, '@alice is back tomorrow')] })
 
-      items = collect_from(session, user_id: 1, sources: %w[posts], username: 'alice')
+      items = collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice')
 
       assert_equal(['1_10'], items.map(&:key))
       assert_equal(0, session.stats.ads)
@@ -139,7 +139,7 @@ module OFDL
     def test_include_ads_keeps_them
       session = scanning_session({ 'posts' => [advert_row(1, 10, 'go see @bob')] })
 
-      items = collect_from(session, user_id: 1, sources: %w[posts], username: 'alice', skip_ads: false)
+      items = collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice', skip_ads: false)
 
       assert_equal(['1_10'], items.map(&:key))
       assert_equal(0, session.stats.ads)
@@ -158,7 +158,7 @@ module OFDL
     def test_a_post_before_since_that_is_not_on_disk_is_a_gap
       session = gap_session(present: false)
 
-      collect_from(session, user_id: 1, sources: %w[posts], username: 'alice',
+      collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice',
                             since: Time.parse('2026-08-01T00:00:00Z'))
 
       assert_equal(['alice/posts'], session.gaps)
@@ -167,7 +167,7 @@ module OFDL
     def test_a_post_before_since_that_is_on_disk_is_not_a_gap
       session = gap_session(present: true)
 
-      collect_from(session, user_id: 1, sources: %w[posts], username: 'alice',
+      collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice',
                             since: Time.parse('2026-08-01T00:00:00Z'))
 
       assert_empty(session.gaps)
@@ -177,16 +177,16 @@ module OFDL
     def test_no_since_means_no_gap
       session = gap_session(present: false)
 
-      collect_from(session, user_id: 1, sources: %w[posts], username: 'alice')
+      collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice')
 
       assert_empty(session.gaps)
     end
 
-    def test_deduplicates_across_sources
+    def test_deduplicates_across_post_types
       shared = row(1, 10, '2026-01-14T00:00:00Z')
       session = session_with({ 'posts' => [shared], 'paid' => [shared] })
 
-      items = collect_from(session, user_id: 1, sources: %w[posts paid])
+      items = collect_from(session, user_id: 1, post_types: %w[posts paid])
 
       assert_equal(1, items.size)
       assert_equal('1_10', items.first.key)
@@ -198,7 +198,7 @@ module OFDL
                                row(2, 20, '2026-06-01T00:00:00Z')
                              ] })
 
-      items = collect_from(session, user_id: 1, sources: %w[posts], since: Time.utc(2026, 3, 1))
+      items = collect_from(session, user_id: 1, post_types: %w[posts], since: Time.utc(2026, 3, 1))
 
       assert_equal([20], items.map(&:media_id))
     end
@@ -228,7 +228,7 @@ module OFDL
       session = streaming_session(blocking, downloaded)
 
       Timeout.timeout(5) do
-        summary = session.archive(targets: [{ id: 1, username: 'creator' }], sources: %w[posts])
+        summary = session.archive(targets: [{ id: 1, username: 'creator' }], post_types: %w[posts])
 
         assert_equal(2, summary.downloaded)
       end
@@ -245,13 +245,13 @@ module OFDL
       session.instance_variable_set(:@downloader, quiet)
       session.instance_variable_set(:@library, FakeLibrary.new)
 
-      Timeout.timeout(5) { session.archive(targets: [{ id: 1, username: 'creator' }], sources: %w[posts]) }
+      Timeout.timeout(5) { session.archive(targets: [{ id: 1, username: 'creator' }], post_types: %w[posts]) }
 
       assert_equal(0, session.stats.queued)
     end
 
     # See Stats#done_scanning.
-    def test_scanning_reads_done_once_every_source_is_walked
+    def test_scanning_reads_done_once_every_post_type_is_walked
       session = session_with({ 'posts' => [row(1, 10, '2026-01-14T00:00:00Z')] })
       quiet = Object.new
       quiet.define_singleton_method(:call) do |item, username:, slot: 0|
@@ -260,9 +260,9 @@ module OFDL
       session.instance_variable_set(:@downloader, quiet)
       session.instance_variable_set(:@library, FakeLibrary.new)
 
-      Timeout.timeout(5) { session.archive(targets: [{ id: 1, username: 'creator' }], sources: %w[posts]) }
+      Timeout.timeout(5) { session.archive(targets: [{ id: 1, username: 'creator' }], post_types: %w[posts]) }
 
-      assert_equal('done', session.stats.source)
+      assert_equal('done', session.stats.step)
     end
 
     # A pool per creator could not begin the second creator's enumeration until
@@ -295,7 +295,7 @@ module OFDL
 
       summary = Timeout.timeout(5) do
         session.archive(targets: [{ id: 1, username: 'alice' }, { id: 2, username: 'bob' }],
-                        sources: %w[posts])
+                        post_types: %w[posts])
       end
 
       assert_equal(2, summary.downloaded)
@@ -311,7 +311,7 @@ module OFDL
       session.instance_variable_set(:@downloader, exploding)
       session.instance_variable_set(:@library, FakeLibrary.new)
 
-      summary = Timeout.timeout(5) { session.archive(targets: [{ id: 1, username: 'creator' }], sources: %w[posts]) }
+      summary = Timeout.timeout(5) { session.archive(targets: [{ id: 1, username: 'creator' }], post_types: %w[posts]) }
 
       assert_equal(1, summary.failed)
     end
@@ -327,7 +327,7 @@ module OFDL
       have.define_singleton_method(:have?) { |item, username:| item.media_id == 10 }
       session.instance_variable_set(:@library, have)
 
-      items = collect_from(session, user_id: 1, sources: %w[posts], username: 'creator')
+      items = collect_from(session, user_id: 1, post_types: %w[posts], username: 'creator')
 
       assert_equal([20], items.map(&:media_id))
       assert_equal(1, session.stats.queued)
@@ -339,19 +339,19 @@ module OFDL
       rows[1]['media'][0]['type'] = 'video'
       session = session_with({ 'posts' => rows })
 
-      collect_from(session, user_id: 1, sources: %w[posts])
+      collect_from(session, user_id: 1, post_types: %w[posts])
 
       assert_equal(1, session.stats.images)
       assert_equal(1, session.stats.videos)
     end
 
-    def test_tags_items_with_their_source
+    def test_tags_items_with_their_post_type
       session = session_with({ 'posts' => [row(1, 10, '2026-01-14T00:00:00Z')],
                                'messages' => [row(2, 20, '2026-01-14T00:00:00Z')] })
 
-      items = collect_from(session, user_id: 1, sources: %w[posts messages])
+      items = collect_from(session, user_id: 1, post_types: %w[posts messages])
 
-      assert_equal(%w[posts messages], items.map(&:source))
+      assert_equal(%w[posts messages], items.map(&:post_type))
     end
   end
 
@@ -453,7 +453,7 @@ module OFDL
       gate = Watermark.new
       session.instance_variable_set(:@counted, gate)
 
-      run = Thread.new { session.archive(targets: [{ id: 1, username: 'creator' }], sources: %w[posts]) }
+      run = Thread.new { session.archive(targets: [{ id: 1, username: 'creator' }], post_types: %w[posts]) }
       await_wait(session)
 
       assert_equal('creator', session.stats.creator)
@@ -484,7 +484,7 @@ module OFDL
       gate = Watermark.new
       session.instance_variable_set(:@counted, gate)
 
-      run = Thread.new { session.archive(targets: [{ id: 1, username: 'Alice' }], sources: %w[posts]) }
+      run = Thread.new { session.archive(targets: [{ id: 1, username: 'Alice' }], post_types: %w[posts]) }
       await_wait(session)
 
       gate.pass('Bob')
@@ -508,7 +508,7 @@ module OFDL
       session.instance_variable_set(:@counted, gate)
 
       run = Thread.new do
-        session.archive(targets: [{ id: 2, username: 'bob' }, { id: 1, username: 'alice' }], sources: %w[posts])
+        session.archive(targets: [{ id: 2, username: 'bob' }, { id: 1, username: 'alice' }], post_types: %w[posts])
       end
       await_wait(session)
 

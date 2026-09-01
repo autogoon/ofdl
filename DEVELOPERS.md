@@ -59,7 +59,7 @@ when to run it is in [CLAUDE.md](./CLAUDE.md).
 ## Enumeration and downloading run together
 
 Listing is the slow half. It's paced at a couple of requests a second and a
-large timeline runs to hundreds of pages, so walking every source to the end
+large timeline runs to hundreds of pages, so walking every post type to the end
 before fetching anything would waste most of the run. Instead the producer
 pushes each item onto a bounded queue and the download pool takes from it, and
 the first file lands while the second page is still being listed.
@@ -72,16 +72,16 @@ item, and why every log line and panel row names its creator.
 
 `QUEUE_DEPTH` in `Session` bounds the queue at 256, and the bound is there for
 backpressure, not capacity. The producer is paced only by `requests_per_second`
-and yields a page at a time, so with an unbounded queue it would run to the end
-of every source while the pool trickles along behind it. Memory would scale with
-the size of the library instead of with concurrency, and `queued` would show the
-whole timeline rather than what's actually waiting.
+and yields a page at a time, so with an unbounded queue the producer would run
+to the end of every post type while the pool was still draining the first pages.
+Memory would scale with the size of the library instead of with concurrency, and
+`queued` would show the whole timeline rather than what's actually waiting.
 
-It also caps the listing a run does that it never uses. Once the queue is full
-the producer blocks, so a run stopped with Ctrl-C has listed at most 256 items
-beyond what it downloaded, rather than having raced to the end of every source
-first. That is a real saving in requests, but only for a run that doesn't finish
-— a completed run lists exactly the same pages either way.
+The bound also caps the listing a run does that it never uses. Once the queue is
+full the producer blocks, so a run stopped with Ctrl-C has listed at most 256
+items beyond what it downloaded, rather than every post type to the end. Those
+unmade requests are a saving only for a run that doesn't finish — a completed
+run lists exactly the same pages either way.
 
 The bound doesn't slow the request rate down. Every API call goes through one
 `RateLimiter` on the `Client`, so `requests_per_second` is what decides how fast

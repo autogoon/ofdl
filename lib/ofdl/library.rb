@@ -8,8 +8,8 @@ module OFDL
   # because completion is an atomic rename from `.part` into place (see
   # Scratch#publish).
   #
-  #   <output_dir>/<username>/<source>/<date>_<post_id>_<media_id>.<ext>
-  #   <output_dir>/<username>/<source>/<date>_<post_id>_<media_id>.<ext>.drm
+  #   <output_dir>/<username>/<post_type>/<date>_<post_id>_<media_id>.<ext>
+  #   <output_dir>/<username>/<post_type>/<date>_<post_id>_<media_id>.<ext>.drm
   #
   # The `.drm` marker is an empty file standing in for a protected video, so a
   # rerun counts the item as present and does not queue it.
@@ -31,16 +31,16 @@ module OFDL
       raise ConfigError, root_problem
     end
 
-    def dir_for(username, source) = @root.join(sanitise(username), source.to_s)
+    def dir_for(username, post_type) = @root.join(sanitise(username), post_type.to_s)
 
-    def path_for(item, username:) = dir_for(username, item.source).join(item.filename)
+    def path_for(item, username:) = dir_for(username, item.post_type).join(item.filename)
 
-    def marker_path_for(item, username:) = dir_for(username, item.source).join(item.marker_filename)
+    def marker_path_for(item, username:) = dir_for(username, item.post_type).join(item.marker_filename)
 
     # True when the item is already accounted for -- as a real file or as a
     # protected-video marker.
     def have?(item, username:)
-      keys(username, item.source).include?(item.key)
+      keys(username, item.post_type).include?(item.key)
     end
 
     def size_of(item, username:)
@@ -50,10 +50,10 @@ module OFDL
     end
 
     # Returns [files, bytes]. With `only` absent, reads every creator directory
-    # and every source under each creator directory. `only` is creator names
+    # and every post type under each creator directory. `only` is creator names
     # as typed; tally folds each name with `walk_key`, so the case a name is
     # given in need not match the directory's, and reads only those creators'
-    # directories. The count never depends on the sources a run names, or on
+    # directories. The count never depends on the post types a run names, or on
     # `--since`. See Session#count_library.
     #
     # The walk makes the same per-directory listings `have?` makes one at a
@@ -87,7 +87,7 @@ module OFDL
     end
 
     def record(item, username:)
-      @mutex.synchronize { (@keys[[sanitise(username), item.source.to_s]] ||= Set.new) << item.key }
+      @mutex.synchronize { (@keys[[sanitise(username), item.post_type.to_s]] ||= Set.new) << item.key }
     end
 
     def write_marker(item, username:)
@@ -157,16 +157,16 @@ module OFDL
 
     def nearest_existing_ancestor = @root.ascend.find(&:exist?) || Pathname('/')
 
-    # One directory listing per (user, source), cached for the run.
-    def keys(username, source)
-      cache(username, source) { key_set(media_files(dir_for(username, source))) }
+    # One directory listing per (user, post type), cached for the run.
+    def keys(username, post_type)
+      cache(username, post_type) { key_set(media_files(dir_for(username, post_type))) }
     end
 
-    def cache(username, source)
-      @mutex.synchronize { @keys[[sanitise(username), source.to_s]] ||= yield }
+    def cache(username, post_type)
+      @mutex.synchronize { @keys[[sanitise(username), post_type.to_s]] ||= yield }
     end
 
-    # <root>/<username>/<source>/, the layout at the top of this class. A
+    # <root>/<username>/<post_type>/, the layout at the top of this class. A
     # directory name is a sanitised username, which is what the cache is keyed
     # by. Sorted, so a walk of the tree has an order others can wait on.
     def creator_dirs(only)
@@ -190,7 +190,7 @@ module OFDL
     def tally_creator(creator)
       files = bytes = 0
 
-      source_dirs(creator).each do |dir|
+      post_type_dirs(creator).each do |dir|
         paths = media_files(dir)
         cache(creator.basename.to_s, dir.basename.to_s) { key_set(paths) }
         paths.each do |path|
@@ -204,9 +204,9 @@ module OFDL
       [files, bytes]
     end
 
-    def source_dirs(creator) = creator.children.select(&:directory?)
+    def post_type_dirs(creator) = creator.children.select(&:directory?)
 
-    # What counts as present in one (creator, source) directory: a downloaded
+    # What counts as present in one (creator, post type) directory: a downloaded
     # file or a `.drm` marker, never a `.part`.
     def media_files(dir)
       return [] unless dir.directory?

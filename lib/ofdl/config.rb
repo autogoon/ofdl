@@ -6,7 +6,7 @@ module OFDL
   # There is no database and no hidden state directory: this JSON file and the
   # output tree hold all persistent state.
   class Config
-    SOURCES = %w[posts messages stories highlights paid archived].freeze
+    POST_TYPES = %w[posts messages stories highlights paid archived].freeze
 
     # output_dir is not here. It is the one key with no defensible default: an
     # invented root would be silently created on the boot disk the first time a
@@ -17,7 +17,7 @@ module OFDL
       'concurrency' => 4,
       'requests_per_second' => 2.0,
       'rules_url' => 'https://r2.hlsdownloader.com/win32/dynamicRules.json',
-      'sources' => SOURCES,
+      'post_types' => POST_TYPES,
       'skip_protected' => true,
       'mark_protected' => true,
       'skip_ads' => true,
@@ -75,7 +75,7 @@ module OFDL
 
     def rules_file = @data['rules_file']&.then { Pathname(it).expand_path }
 
-    # Refetched only when OnlyFans rejects a signature; see RulesSource.
+    # Refetched only when OnlyFans rejects a signature; see RulesStore.
     def cached_rules = @data['rules']
 
     def store_rules!(payload)
@@ -92,7 +92,7 @@ module OFDL
       false
     end
 
-    def sources = Array(@data.fetch('sources')).map(&:to_s)
+    def post_types = Array(@data.fetch('post_types')).map(&:to_s)
 
     def skip_protected? = @data.fetch('skip_protected') != false
 
@@ -133,8 +133,8 @@ module OFDL
     end
 
     def validate!
-      unknown = sources - SOURCES
-      raise ConfigError, "unknown sources: #{unknown.join(', ')} (known: #{SOURCES.join(', ')})" if unknown.any?
+      unknown = post_types - POST_TYPES
+      raise ConfigError, "unknown post types: #{unknown.join(', ')} (known: #{POST_TYPES.join(', ')})" if unknown.any?
       raise ConfigError, 'concurrency must be >= 1' if concurrency < 1
       raise ConfigError, 'requests_per_second must be > 0' unless requests_per_second.positive?
       raise ConfigError, 'refresh must be > 0' unless refresh.positive?

@@ -9,7 +9,7 @@ module OFDL
   class ThumbnailTest < TestCase
     def setup
       @dir = Pathname(Dir.mktmpdir('ofdl-thumb'))
-      @source = @dir.join('source.jpg')
+      @original = @dir.join('original.jpg')
     end
 
     def teardown = FileUtils.remove_entry(@dir)
@@ -23,8 +23,8 @@ module OFDL
           .unpack1('m')
       )
       system('sips', '-s', 'format', 'jpeg', '-z', height.to_s, width.to_s,
-             png.to_s, '--out', @source.to_s, out: File::NULL, err: File::NULL)
-      @source
+             png.to_s, '--out', @original.to_s, out: File::NULL, err: File::NULL)
+      @original
     end
 
     def dimensions(path)
@@ -39,7 +39,7 @@ module OFDL
       shaped(1600, 1200)
       target = @dir.join('thumb.jpg')
 
-      assert_equal(target, Thumbnail.build(@source, target, width: 800, height: 600))
+      assert_equal(target, Thumbnail.build(@original, target, width: 800, height: 600))
       assert_equal([800, 600], dimensions(target))
     end
 
@@ -48,7 +48,7 @@ module OFDL
 
       shaped(1200, 1600)
 
-      Thumbnail.build(@source, @dir.join('thumb.jpg'), width: 800, height: 600)
+      Thumbnail.build(@original, @dir.join('thumb.jpg'), width: 800, height: 600)
 
       assert_equal([800, 600], dimensions(@dir.join('thumb.jpg')))
     end
@@ -60,7 +60,7 @@ module OFDL
 
       shaped(2400, 400)
 
-      Thumbnail.build(@source, @dir.join('thumb.jpg'), width: 300, height: 300)
+      Thumbnail.build(@original, @dir.join('thumb.jpg'), width: 300, height: 300)
 
       assert_equal([300, 300], dimensions(@dir.join('thumb.jpg')))
     end
@@ -70,9 +70,9 @@ module OFDL
 
       shaped(2000, 2000)
       target = @dir.join('thumb.jpg')
-      Thumbnail.build(@source, target, width: 400, height: 300)
+      Thumbnail.build(@original, target, width: 400, height: 300)
 
-      assert_operator(target.size, :<, @source.size / 4,
+      assert_operator(target.size, :<, @original.size / 4,
                       'thumbnail is not small enough to fix the flash')
     end
 
@@ -85,11 +85,11 @@ module OFDL
 
       shaped(200, 200)
 
-      assert_nil(Thumbnail.build(@source, @dir.join('out.jpg'), width: 400, height: 300, binary: 'sips-not-here'))
+      assert_nil(Thumbnail.build(@original, @dir.join('out.jpg'), width: 400, height: 300, binary: 'sips-not-here'))
     end
 
     def test_a_nonsense_size_returns_nil
-      assert_nil(Thumbnail.build(@source, @dir.join('out.jpg'), width: 0, height: 300))
+      assert_nil(Thumbnail.build(@original, @dir.join('out.jpg'), width: 0, height: 300))
     end
 
     def test_availability_is_detectable

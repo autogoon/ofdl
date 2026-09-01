@@ -58,9 +58,10 @@ module OFDL
       OptionParser.new do |o|
         o.banner = 'usage: ofdl [global options] <command> [options]'
         # Two spaces, matching the commands block, so one column runs down the
-        # whole screen rather than one per section.
+        # whole screen rather than one per section. 26 is the width `--post-types
+        # type,...` needs to keep its description on the same line.
         o.summary_indent = '  '
-        o.summary_width = 24
+        o.summary_width = 26
         o.separator('')
         o.separator('commands:')
         COMMANDS.each do |name, (args, description)|
@@ -92,10 +93,10 @@ module OFDL
       'against `ofdl subs`. An unknown name is an error, not a silent skip.',
       '',
       'examples:',
-      '  ofdl fetch                        every active subscription',
-      '  ofdl fetch alice bob              two creators, configured sources',
-      '  ofdl fetch alice --sources posts  one creator, one source',
-      '  ofdl fetch --since 2026-01-01     everything posted on or after a date'
+      '  ofdl fetch                           every active subscription',
+      '  ofdl fetch alice bob                 two creators, configured post types',
+      '  ofdl fetch alice --post-types posts  one creator, one post type',
+      '  ofdl fetch --since 2026-01-01        everything posted on or after a date'
     ].freeze
     private_constant :USAGE_FOOTER
 
@@ -104,7 +105,7 @@ module OFDL
     def status_parser(options)
       OptionParser.new do |o|
         o.summary_indent = '  '
-        o.summary_width = 24
+        o.summary_width = 26
         o.on('--library-stats', 'count the files and bytes in output_dir') { options[:library_stats] = true }
       end
     end
@@ -114,9 +115,9 @@ module OFDL
     def fetch_parser(options)
       OptionParser.new do |o|
         o.summary_indent = '  '
-        o.summary_width = 24
-        o.on('--sources source,...', Array, 'narrow to some of the sources; defaults to all of',
-             Config::SOURCES.join(', ')) { options[:sources] = it }
+        o.summary_width = 26
+        o.on('--post-types type,...', Array, 'narrow to some of the post types; defaults to all of',
+             Config::POST_TYPES.join(', ')) { options[:post_types] = it }
         o.on('--since DATE', 'only media posted on or after DATE (YYYY-MM-DD)') { options[:since] = parse_date(it) }
         o.on('--include-ads', 'keep posts that advertise another creator') { options[:skip_ads] = false }
         o.on('--no-images', 'do not preview downloaded images in the terminal') { options[:images] = false }
@@ -170,11 +171,11 @@ module OFDL
     end
 
     def cmd_fetch(argv)
-      options = { sources: @config.sources, since: nil, images: @config.images?, skip_ads: @config.skip_ads? }
+      options = { post_types: @config.post_types, since: nil, images: @config.images?, skip_ads: @config.skip_ads? }
       fetch_parser(options).parse!(argv)
 
-      unknown = options[:sources] - Config::SOURCES
-      raise ConfigError, "unknown sources: #{unknown.join(', ')}" if unknown.any?
+      unknown = options[:post_types] - Config::POST_TYPES
+      raise ConfigError, "unknown post types: #{unknown.join(', ')}" if unknown.any?
 
       # Resolution runs inside the dashboard: listing subscriptions is several
       # paced API calls, and the screen stays blank until the dashboard starts.
@@ -191,7 +192,8 @@ module OFDL
         targets = resolve(argv, options)
         session.stats.bump(:creators_total, targets.size)
 
-        session.archive(targets:, sources: options[:sources], since: options[:since], skip_ads: options[:skip_ads])
+        session.archive(targets:, post_types: options[:post_types], since: options[:since],
+                        skip_ads: options[:skip_ads])
 
         dashboard.stop
 
@@ -224,13 +226,13 @@ module OFDL
 
     def resolve(argv, options)
       @log.step('resolving subscriptions')
-      session.stats.scanning(creator: nil, source: 'subscriptions')
+      session.stats.scanning(creator: nil, step: 'subscriptions')
 
       targets = session.in_walk_order(resolve_targets(argv))
       raise ConfigError, 'no active subscriptions' if targets.empty?
 
       @log.info("  #{targets.size} to archive: #{targets.map { it[:username] }.join(', ')}")
-      @log.info("  sources: #{options[:sources].join(', ')}")
+      @log.info("  post types: #{options[:post_types].join(', ')}")
       targets
     end
 

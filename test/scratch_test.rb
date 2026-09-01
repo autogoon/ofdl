@@ -14,7 +14,7 @@ module OFDL
 
     def item(key: '111_222', extension: 'jpg')
       post, media = key.split('_')
-      Item.new(media_id: media, post_id: post, source: 'posts', kind: 'photo',
+      Item.new(media_id: media, post_id: post, post_type: 'posts', kind: 'photo',
                posted_at: Time.utc(2026, 1, 14), url: 'https://cdn.example.com/a.jpg',
                protected: false, extension:)
     end
@@ -25,22 +25,22 @@ module OFDL
     end
 
     def test_publish_moves_the_finished_file_into_place
-      source = @scratch.path_for(item)
-      source.write('hello')
+      working = @scratch.path_for(item)
+      working.write('hello')
       target = @destination.join('final.jpg')
 
-      assert_equal(5, @scratch.publish(source, target))
+      assert_equal(5, @scratch.publish(working, target))
       assert_equal('hello', target.read)
     end
 
     # The staged copy lands beside the destination, not in the scratch root --
     # see Scratch#publish for why.
     def test_publish_stages_beside_the_destination_before_renaming
-      source = @scratch.path_for(item)
-      source.write('hello')
+      working = @scratch.path_for(item)
+      working.write('hello')
       target = @destination.join('final.jpg')
 
-      @scratch.publish(source, target)
+      @scratch.publish(working, target)
       staged = @destination.join('final.jpg.part')
 
       refute_path_exists(staged, 'the staging file should be renamed away, not left behind')

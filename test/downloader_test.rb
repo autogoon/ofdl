@@ -41,7 +41,7 @@ module OFDL
         @published = []
       end
 
-      def publish(source, destination)
+      def publish(working, destination)
         @observe&.call
         @published << destination
         if (hook = @during_publish)
@@ -66,7 +66,7 @@ module OFDL
 
     def item(extension: 'jpg', key: '111_222')
       post, media = key.split('_')
-      Item.new(media_id: media, post_id: post, source: 'posts', kind: 'photo',
+      Item.new(media_id: media, post_id: post, post_type: 'posts', kind: 'photo',
                posted_at: Time.utc(2026, 1, 14), url: "https://cdn.example.com/a.#{extension}",
                protected: false, extension:)
     end

@@ -20,9 +20,9 @@ module OFDL
     end
 
     def test_leaves_subcommand_options_alone
-      rest, global = absorb(['--sources', 'posts', '--since', '2026-01-01'])
+      rest, global = absorb(['--post-types', 'posts', '--since', '2026-01-01'])
 
-      assert_equal(['--sources', 'posts', '--since', '2026-01-01'], rest)
+      assert_equal(['--post-types', 'posts', '--since', '2026-01-01'], rest)
       refute(global[:verbose])
     end
 
@@ -47,7 +47,7 @@ module OFDL
     # Rendered from #fetch_parser, so a new fetch option appears here without
     # the usage screen being touched.
     def test_the_fetch_options_are_listed
-      assert_match(/--sources source,\.\.\./, usage)
+      assert_match(/--post-types type,\.\.\./, usage)
       assert_match(/--since DATE/, usage)
       assert_match(/--include-ads/, usage)
       assert_match(/--no-images/, usage)
@@ -81,10 +81,11 @@ module OFDL
       refute(options[:skip_ads])
     end
 
-    # Beside --sources rather than in a footnote, and generated, so a source
-    # added to Config::SOURCES is documented without touching the usage screen.
-    def test_the_valid_sources_are_named_under_the_option
-      assert_match(/--sources source,\.\.\..*\n\s+#{Config::SOURCES.join(', ')}$/, usage)
+    # Beside --post-types rather than in a footnote, and generated, so a type
+    # added to Config::POST_TYPES is documented without touching the usage
+    # screen.
+    def test_the_valid_post_types_are_named_under_the_option
+      assert_match(/--post-types type,\.\.\..*\n\s+#{Config::POST_TYPES.join(', ')}$/, usage)
     end
   end
 

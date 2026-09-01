@@ -7,7 +7,7 @@ module OFDL
     def stats(clock: -> { 0.0 }) = Stats.new(clock:)
 
     def outcome(status, bytes = 0)
-      item = Item.new(media_id: 1, post_id: 2, source: 'posts', kind: 'photo',
+      item = Item.new(media_id: 1, post_id: 2, post_type: 'posts', kind: 'photo',
                       posted_at: Time.now, url: 'u', protected: false, extension: 'jpg')
       Outcome.new(item:, status:, bytes:, message: nil)
     end
@@ -43,21 +43,21 @@ module OFDL
 
     def test_tracks_what_is_being_scanned
       subject = stats
-      subject.scanning(creator: 'someone', source: 'messages')
+      subject.scanning(creator: 'someone', step: 'messages')
 
       assert_equal('someone', subject.creator)
-      assert_equal('messages', subject.source)
+      assert_equal('messages', subject.step)
     end
 
     # Nothing is being scanned once the producer is through, so no creator is
     # named for the drain; see Stats#done_scanning.
     def test_scanning_finishes_by_clearing_the_creator
       subject = stats
-      subject.scanning(creator: 'someone', source: 'paid')
+      subject.scanning(creator: 'someone', step: 'paid')
 
       subject.done_scanning
 
-      assert_equal('done', subject.source)
+      assert_equal('done', subject.step)
       assert_nil(subject.creator)
     end
 

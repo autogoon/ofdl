@@ -23,7 +23,7 @@ module OFDL
       @counts = COUNTERS.to_h { [it, 0] }
       @active = {}
       @creator = nil
-      @source = nil
+      @step = nil
       @started_at = @clock.call
     end
 
@@ -36,21 +36,24 @@ module OFDL
       self
     end
 
-    def scanning(creator:, source:)
+    # `step` is the post type being listed, or one of the stages either side of
+    # the listing: `subscriptions`, `waiting for listing`, `done`.
+    def scanning(creator:, step:)
       @mutex.synchronize do
         @creator = creator
-        @source = source
+        @step = step
       end
       self
     end
 
-    # The producer has walked every source; the pool may still be draining.
-    # Without this the fields hold the last source and creator listed, which
-    # reads as though that creator were still being scanned for the whole of
-    # the drain -- and the pool is draining work from all of them.
+    # The producer has walked every post type; the pool may still be draining.
+    # Without this call the fields hold the last post type and creator listed,
+    # which reads as though that creator were still being scanned for the whole
+    # of the drain -- and the pool is draining work from every creator, not that
+    # one.
     def done_scanning
       @mutex.synchronize do
-        @source = 'done'
+        @step = 'done'
         @creator = nil
       end
       self
@@ -58,7 +61,7 @@ module OFDL
 
     def creator = @mutex.synchronize { @creator }
 
-    def source = @mutex.synchronize { @source }
+    def step = @mutex.synchronize { @step }
 
     def elapsed = @clock.call - @started_at
 
@@ -78,8 +81,8 @@ module OFDL
     #
     # `path` is the scratch file: the sampler stats it for live byte progress,
     # which avoids threading a callback down through curl.
-    def begin_download(slot, filename:, path:, total:, headers_path: nil, creator: nil, source: nil)
-      @mutex.synchronize { @active[slot] = { slot:, filename:, path:, total:, headers_path:, creator:, source: } }
+    def begin_download(slot, filename:, path:, total:, headers_path: nil, creator: nil, post_type: nil)
+      @mutex.synchronize { @active[slot] = { slot:, filename:, path:, total:, headers_path:, creator:, post_type: } }
       self
     end
 
