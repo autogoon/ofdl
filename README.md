@@ -75,15 +75,20 @@ Every command below is written `ofdl`. Running from a clone, read that as
 ```sh
 ofdl init                    # writes ~/.ofdl-config.json
 $EDITOR ~/.ofdl-config.json  # set output_dir (it must already exist)
-ofdl status                  # check the tools, the library, and the session
+ofdl status                  # check the tools, output_dir, and the session
 ```
 
 `output_dir` is the one key you must set; everything else has a default. See
 [Configuration](#configuration).
 
 Run `status` first. It reports the tools it found, some info about the terminal,
-and what is already in `output_dir` -- then reads your cookies, loads the
+and `output_dir` with whether it is usable -- then reads your cookies, loads the
 signing rules.
+
+`ofdl status --library-stats` also counts the creators, files, bytes and DRM
+markers under `output_dir`. That counts every file one at a time, so on a
+mounted share it costs a network round trip per file, which is why it is off by
+default.
 
 It makes one real request to `/users/me`. If there is a problem with
 authentication, that request will fail and is reported.
@@ -97,7 +102,8 @@ not come back. Cancel it and the run stops with
 ## Use
 
 ```sh
-ofdl status                                # setup, library, and session check
+ofdl status                                # setup, output_dir, and session check
+ofdl status --library-stats                # also count the files in output_dir
 ofdl subs                                  # who you are subscribed to
 ofdl fetch                                 # every subscription, configured sources
 ofdl fetch someone                         # one creator
@@ -238,8 +244,8 @@ has left the queue.
 - `on disk` — what is already in `output_dir` plus what this run has downloaded.
   Naming creators on the command line scopes the figure to those creators;
   naming none covers the whole library. The figure rises as each file in
-  `output_dir` is counted. `ofdl status` reports the whole library's totals
-  whichever creators a run names.
+  `output_dir` is counted. `ofdl status --library-stats` reports the whole
+  library's totals whichever creators a run names.
 - `fetched` — files and bytes this run downloaded. The count is `successful`.
 - `rate` — `fetched` bytes divided by how long the run has been going. It's an
   average over the whole run, not what's happening right now.

@@ -53,8 +53,24 @@ module OFDL
       assert_match(/--no-images/, usage)
     end
 
+    def test_the_status_options_are_listed
+      assert_match(/status options:/, usage)
+      assert_match(/--library-stats/, usage)
+    end
+
     def test_help_is_advertised
       assert_match(/-h, --help/, usage)
+    end
+
+    def test_library_stats_is_off_until_asked_for
+      options = { library_stats: false }
+      CLI.new.send(:status_parser, options).parse!([])
+
+      refute(options[:library_stats])
+
+      CLI.new.send(:status_parser, options).parse!(['--library-stats'])
+
+      assert(options[:library_stats])
     end
 
     # The flag turns the config default off for one run; it never turns it on.

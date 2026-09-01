@@ -67,6 +67,9 @@ module OFDL
           o.separator(format('  %-21s %s', "#{name} #{args}".rstrip, description))
         end
         o.separator('')
+        o.separator('status options:')
+        status_parser({}).summarize { |line| o.separator(line.chomp) }
+        o.separator('')
         o.separator('fetch options:')
         fetch_parser({}).summarize { |line| o.separator(line.chomp) }
         o.separator('')
@@ -95,6 +98,16 @@ module OFDL
       '  ofdl fetch --since 2026-01-01     everything posted on or after a date'
     ].freeze
     private_constant :USAGE_FOOTER
+
+    # Off by default: Library#counts stats every file under output_dir, which on
+    # a mounted share is one network round trip each.
+    def status_parser(options)
+      OptionParser.new do |o|
+        o.summary_indent = '  '
+        o.summary_width = 24
+        o.on('--library-stats', 'count the files and bytes in output_dir') { options[:library_stats] = true }
+      end
+    end
 
     # Defines the fetch options; the usage screen renders them, so this carries
     # no banner of its own.
@@ -210,9 +223,12 @@ module OFDL
     end
 
     # report_session is last: it is the only part that costs a request.
-    def cmd_status(_argv)
+    def cmd_status(argv)
+      options = { library_stats: false }
+      status_parser(options).parse!(argv)
+
       report_environment
-      report_library
+      report_library(stats: options[:library_stats])
       report_session
     end
 
@@ -228,10 +244,11 @@ module OFDL
       @log.info("  terminal     #{terminal_note}")
     end
 
-    def report_library
+    def report_library(stats:)
       @log.step('library')
       @log.info("  output_dir   #{@config.output_dir} #{output_dir_state}")
       return unless @config.output_dir.directory?
+      return @log.info('  use --library-stats to get full stats of your library') unless stats
 
       counts = session.library.counts
       creators = @config.output_dir.children.select(&:directory?)
