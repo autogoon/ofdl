@@ -59,6 +59,10 @@ module OFDL
         Array(row['media']).filter_map { |media| from_media(media, row:, source:, posted_at:) }
       end
 
+      # When a row was posted. Public because Api stops paging on it; see
+      # Api#posts.
+      def posted_at(row) = timestamp(row)
+
       private
 
       def from_media(media, row:, source:, posted_at:)

@@ -25,7 +25,7 @@ module OFDL
       paged_by_offset('/subscriptions/subscribes', type:, format: 'infinite')
     end
 
-    def posts(user_id, archived: false)
+    def posts(user_id, archived: false, since: nil)
       Enumerator.new do |yielder|
         marker = nil
         loop do
@@ -37,7 +37,9 @@ module OFDL
           params[:label] = 'archived' if archived
 
           page = @client.get("/users/#{user_id}/posts", params)
-          Array(page['list']).each { yielder << it }
+          rows = Array(page['list'])
+          rows.each { yielder << it }
+          break if exhausted?(rows, since)
 
           marker = page['tailMarker'].to_s
           break unless page['hasMore'] && !marker.empty?
@@ -45,7 +47,7 @@ module OFDL
       end
     end
 
-    def messages(user_id)
+    def messages(user_id, since: nil)
       Enumerator.new do |yielder|
         last_id = nil
         loop do
@@ -55,6 +57,7 @@ module OFDL
           page = @client.get("/chats/#{user_id}/messages", params)
           rows = Array(page['list'])
           rows.each { yielder << it }
+          break if exhausted?(rows, since)
 
           last_id = rows.last&.dig('id')
           break unless page['hasMore'] && last_id
@@ -62,7 +65,7 @@ module OFDL
       end
     end
 
-    def paid(user_id)
+    def paid(user_id, since: nil)
       Enumerator.new do |yielder|
         offset = 0
         loop do
@@ -72,6 +75,7 @@ module OFDL
                              })
           rows = Array(page['list'])
           rows.each { yielder << it }
+          break if exhausted?(rows, since)
 
           offset += PAGE
           break unless page['hasMore'] && rows.any?
@@ -107,6 +111,20 @@ module OFDL
     end
 
     private
+
+    # True once a page cannot be followed by anything `since` would keep. Posts,
+    # messages and paid are ordered newest first, so a page whose oldest row
+    # precedes `since` is the last page worth asking for. The whole page is
+    # yielded before the break: rows above the oldest row may still be in range.
+    #
+    # Highlights and stories get no such guard. Highlights page over collections
+    # by recency while the stories inside one collection carry their own dates,
+    # so the dates in the next collection are unknown.
+    def exhausted?(rows, since)
+      return false unless since && rows.any?
+
+      Media.posted_at(rows.last) < since
+    end
 
     def paged_by_offset(path, **params)
       Enumerator.new do |yielder|

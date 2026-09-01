@@ -34,7 +34,7 @@ Metrics/CyclomaticComplexity:
 Metrics/PerceivedComplexity:
   Max: 12
 Metrics/ClassLength:
-  Max: 300
+  Max: 320
 Metrics/ModuleLength:
   Max: 300
   CountAsOne: ['heredoc']

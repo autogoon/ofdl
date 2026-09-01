@@ -35,11 +35,16 @@ module OFDL
   class Session
     attr_reader :config, :log, :stats
 
+    # Creators and sources whose newest post older than `--since` is not on
+    # disk; see #note_gap.
+    attr_reader :gaps
+
     def initialize(config:, log:, stats: Stats.new, preview: nil)
       @config = config
       @log = log
       @stats = stats
       @preview = preview
+      @gaps = []
     end
 
     # The dashboard, once it exists; workers draw their own previews through it.
@@ -182,7 +187,7 @@ module OFDL
         @stats.scanning(creator: username, source:)
         counts = Hash.new(0)
 
-        each_row(source, user_id) do |row|
+        each_row(source, user_id, since:) do |row|
           counts[:rows] += 1
           # Read once per row rather than once per item, and only when the
           # answer would be acted on.
@@ -195,6 +200,7 @@ module OFDL
             verdict = verdict_for(item, username:, since:, seen:, advert:)
             counts[verdict] += 1
             case verdict
+            when :old then note_gap(item, username:, source:, since:) if counts[:old] == 1
             when :advert then @log.debug("#{source}/#{item.post_id}: advertises #{advert}, skipped")
             when :queued then yield item
             end
@@ -238,6 +244,21 @@ module OFDL
 
       @stats.bump(:queued)
       :queued
+    end
+
+    # `item` is the newest one older than `--since`. On disk means a previous
+    # run downloaded it; absent means `--since` started later than the newest
+    # gap in the library, so the posts between the two were never fetched and no
+    # later run reaches them.
+    #
+    # Only this row is checked. A gap older than it goes unreported.
+    def note_gap(item, username:, source:, since:)
+      return unless username
+      return if present?(item, username)
+
+      @gaps << "#{username}/#{source}"
+      @log.warn("  #{username}/#{source}: posts before #{since.strftime('%Y-%m-%d')} " \
+                'are not on disk -- rerun with an earlier --since')
     end
 
     def count_discovery(item)
@@ -305,13 +326,13 @@ module OFDL
       Outcome.new(item:, status: :failed, bytes: 0, message: "#{e.class}: #{e.message}")
     end
 
-    def each_row(source, user_id, &)
+    def each_row(source, user_id, since: nil, &)
       enumerator =
         case source
-        when 'posts' then api.posts(user_id)
-        when 'archived' then api.posts(user_id, archived: true)
-        when 'messages' then api.messages(user_id)
-        when 'paid' then api.paid(user_id)
+        when 'posts' then api.posts(user_id, since:)
+        when 'archived' then api.posts(user_id, archived: true, since:)
+        when 'messages' then api.messages(user_id, since:)
+        when 'paid' then api.paid(user_id, since:)
         when 'stories' then api.stories(user_id)
         when 'highlights' then api.highlights(user_id)
         else raise ConfigError, "unknown source #{source.inspect}"

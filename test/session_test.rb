@@ -34,10 +34,10 @@ module OFDL
   # Library over a root that does not exist, and sessions wired to both.
   module SessionFakes
     FakeApi = Struct.new(:by_source) do
-      def posts(_id, archived: false) = by_source.fetch(archived ? 'archived' : 'posts', [])
-      def messages(_id) = by_source.fetch('messages', [])
+      def posts(_id, archived: false, since: nil) = by_source.fetch(archived ? 'archived' : 'posts', [])
+      def messages(_id, since: nil) = by_source.fetch('messages', [])
       def stories(_id) = by_source.fetch('stories', [])
-      def paid(_id) = by_source.fetch('paid', [])
+      def paid(_id, since: nil) = by_source.fetch('paid', [])
       def highlights(_id) = by_source.fetch('highlights', [])
     end
 
@@ -145,6 +145,43 @@ module OFDL
       assert_equal(0, session.stats.ads)
     end
 
+    # The newest post older than --since; see Session#note_gap.
+    def gap_session(present:)
+      session = session_with({ 'posts' => [row(1, 10, '2026-08-20T00:00:00Z'),
+                                           row(2, 20, '2026-07-01T00:00:00Z')] })
+      library = FakeLibrary.new
+      library.define_singleton_method(:have?) { |_item, username:| present }
+      session.instance_variable_set(:@library, library)
+      session
+    end
+
+    def test_a_post_before_since_that_is_not_on_disk_is_a_gap
+      session = gap_session(present: false)
+
+      collect_from(session, user_id: 1, sources: %w[posts], username: 'alice',
+                            since: Time.parse('2026-08-01T00:00:00Z'))
+
+      assert_equal(['alice/posts'], session.gaps)
+    end
+
+    def test_a_post_before_since_that_is_on_disk_is_not_a_gap
+      session = gap_session(present: true)
+
+      collect_from(session, user_id: 1, sources: %w[posts], username: 'alice',
+                            since: Time.parse('2026-08-01T00:00:00Z'))
+
+      assert_empty(session.gaps)
+    end
+
+    # Without a cutoff nothing is out of range, so there is no gap to report.
+    def test_no_since_means_no_gap
+      session = gap_session(present: false)
+
+      collect_from(session, user_id: 1, sources: %w[posts], username: 'alice')
+
+      assert_empty(session.gaps)
+    end
+
     def test_deduplicates_across_sources
       shared = row(1, 10, '2026-01-14T00:00:00Z')
       session = session_with({ 'posts' => [shared], 'paid' => [shared] })
@@ -172,7 +209,7 @@ module OFDL
     def test_downloading_starts_before_enumeration_finishes
       downloaded = Queue.new
       blocking = Object.new
-      blocking.define_singleton_method(:posts) do |_id, archived: false|
+      blocking.define_singleton_method(:posts) do |_id, archived: false, since: nil|
         rows = [
           { 'id' => 1, 'postedAt' => '2026-01-14T00:00:00Z',
             'media' => [{ 'id' => 10, 'type' => 'photo',
@@ -235,7 +272,7 @@ module OFDL
     def test_discovery_reaches_the_next_creator_before_the_first_drains
       reached_second = Queue.new
       api = Object.new
-      api.define_singleton_method(:posts) do |id, archived: false|
+      api.define_singleton_method(:posts) do |id, archived: false, since: nil|
         reached_second << :reached if id == 2
         [{ 'id' => id, 'postedAt' => '2026-01-14T00:00:00Z',
            'media' => [{ 'id' => id * 10, 'type' => 'photo',

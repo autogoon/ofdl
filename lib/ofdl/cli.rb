@@ -197,6 +197,7 @@ module OFDL
 
         puts "\n\nAll Done!  Final stats: "
         dashboard.summary.each { puts(it) }
+        report_gaps
         session.scratch.remove!
       end
     end
@@ -208,6 +209,17 @@ module OFDL
       return nil if names.empty?
 
       names.map { it.delete_prefix('@') }
+    end
+
+    # Repeated below the panel because the inline warning scrolls away during a
+    # long run; see Session#note_gap.
+    def report_gaps
+      gaps = session.gaps
+      return if gaps.empty?
+
+      puts("\n\e[33m--since did not reach back far enough for:\e[0m")
+      gaps.each { puts("  #{it}") }
+      puts('Rerun those with an earlier --since, or with none, to fill the gap.')
     end
 
     def resolve(argv, options)
