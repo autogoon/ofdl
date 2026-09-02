@@ -178,7 +178,7 @@ module OFDL
       counts = Hash.new { |types, type| types[type] = Hash.new(0) }
       listing = nil
 
-      adapter.each_row(wanted, user_id, since:) do |post_type, row|
+      adapter.each_row(wanted, user_id, since:, present: presence(source, username)) do |post_type, row|
         listing = announce(post_type, username:, first: counts[post_type][:rows].zero?) if post_type != listing
         take_row(row, post_type:, adapter:, counts: counts[post_type], username:, since:, seen:, skip_ads:) { yield it }
       end
@@ -196,6 +196,16 @@ module OFDL
     # instead of what is waiting.
     QUEUE_DEPTH = 256
     private_constant :QUEUE_DEPTH
+
+    # Answers whether a key is already on disk, for a source that must make a
+    # further request to learn an item's URL: asking first keeps the request to
+    # what is missing. Without a username there is no library to consult, which
+    # is how tests drain the stream, and every key answers false.
+    def presence(source, username)
+      return ->(_post_type, _key) { false } unless username
+
+      ->(post_type, key) { library.key?(key, source:, username:, post_type:) }
+    end
 
     # One listing can carry two post types -- an Instagram timeline holds reels
     # beside plain posts -- so the panel's step is set from each row rather

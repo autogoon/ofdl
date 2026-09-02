@@ -60,8 +60,11 @@ module OFDL
       # was read under. One feed per post type here; an app whose one listing
       # carries several post types yields them interleaved instead.
       #
+      # `present` goes unused: an OnlyFans row arrives with its media's URLs in
+      # it, so no request is deferred until the library has been consulted.
+      #
       # A feed that raises is skipped; the remaining feeds are still read.
-      def each_row(post_types, user_id, since: nil)
+      def each_row(post_types, user_id, since: nil, present: nil)
         post_types.each do |post_type|
           feed(post_type, user_id, since:).each { yield post_type, it }
         rescue ApiError => e

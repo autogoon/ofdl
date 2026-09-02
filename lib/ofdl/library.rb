@@ -40,7 +40,17 @@ module OFDL
     # True when the item is already accounted for -- as a real file or as a
     # protected-video marker.
     def have?(item, username:)
-      keys(item, username:).include?(item.key)
+      key?(item.key, source: item.source, username:, post_type: item.post_type)
+    end
+
+    # True when a key is already accounted for, taking the key rather than an
+    # Item. A source that must make a further request to learn an item's URL
+    # can build the key without that request, so calling this first keeps the
+    # request to what is missing; see Sources::Instagram#walk_reels.
+    def key?(key, source:, username:, post_type:)
+      cache(source, username, post_type) do
+        key_set(media_files(@root.join(source.to_s, sanitise(username), post_type.to_s)))
+      end.include?(key)
     end
 
     def size_of(item, username:)
@@ -164,11 +174,6 @@ module OFDL
     end
 
     def nearest_existing_ancestor = @root.ascend.find(&:exist?) || Pathname('/')
-
-    # One directory listing per (source, user, post type), cached for the run.
-    def keys(item, username:)
-      cache(item.source, username, item.post_type) { key_set(media_files(dir_for(item, username:))) }
-    end
 
     def cache(source, username, post_type)
       @mutex.synchronize { @keys[cache_key(source, username, post_type)] ||= yield }

@@ -28,9 +28,12 @@ module OFDL
             children(row).flat_map { files_for(it, row, post_id:, posted_at:, post_type:) }
           end
 
-          # A reel is the one row that yields two files; see #reel? for why the
-          # test is on the outer row rather than the media.
           def reel?(row) = row['product_type'] == REEL
+
+          # The two keys a reel's pk will produce, derived without the request
+          # that learns its video URL. A rerun asks the library for both keys
+          # and skips that request; see Sources::Instagram#walk_reels.
+          def keys_for(media_id) = ["#{media_id}_#{media_id}", "#{media_id}_#{media_id}_#{THUMBNAIL_ROLE}"]
 
           private
 

@@ -22,12 +22,7 @@ module OFDL
         required: %w[sessionid ds_user_id csrftoken]
       )
 
-      # `posts` and `reels` both come from the timeline, which is walked once
-      # and split by product_type; see #each_row.
       POST_TYPES = %w[posts reels stories highlights avatar].freeze
-
-      # The timeline carries both, so a run naming either walks it.
-      TIMELINE = %w[posts reels].freeze
 
       def initialize(config:, log:, stats:, transport:)
         @config = config
@@ -56,14 +51,16 @@ module OFDL
       # read as an advert; `--include-ads` and `skip_ads` do not apply.
       def advert_reason(_row, creator: nil) = nil
 
-      # The timeline holds reels beside plain posts, so it is walked once and
-      # each row tagged from its product_type. Asking for only one of the two
-      # still walks it, and yields only the rows of the type asked for.
-      def each_row(post_types, user_id, since: nil, &)
-        wanted = post_types & POST_TYPES
-        walk_timeline(wanted, user_id, since:, &) if wanted.intersect?(TIMELINE)
+      # The timeline is the grid, and a grid may hold reels: an account can
+      # have a reel in both places, or reels the grid never shows. So `posts`
+      # walks the timeline and `reels` walks the reels tab, and a reel found in
+      # both is deduplicated by key like any other repeat; see
+      # Session#verdict_for.
+      def each_row(post_types, user_id, since: nil, present: nil)
+        walk_timeline(user_id, since:) { |row| yield 'posts', row } if post_types.include?('posts')
+        walk_reels(user_id, since:, present:) { |row| yield 'reels', row } if post_types.include?('reels')
 
-        (wanted - TIMELINE).each do |post_type|
+        (post_types - %w[posts reels]).each do |post_type|
           rows_for(post_type, user_id).each { yield post_type, it }
         rescue ApiError => e
           @log.warn("#{post_type}: #{e.message} -- continuing without it")
@@ -86,17 +83,37 @@ module OFDL
         )
       end
 
-      def api = @api ||= Api.new(client:)
+      def tokens = @tokens ||= Tokens.new(transport: @transport, jar:, log: @log)
+
+      def api = @api ||= Api.new(client:, tokens:)
 
       private
 
-      def walk_timeline(wanted, user_id, since:)
-        api.timeline(user_id, since:).each do |row|
-          post_type = Media.reel?(row) ? 'reels' : 'posts'
-          yield post_type, row if wanted.include?(post_type)
+      def walk_timeline(user_id, since:, &)
+        api.timeline(user_id, since:).each(&)
+      rescue ApiError => e
+        @log.warn("posts: #{e.message} -- continuing without it")
+      end
+
+      # The reels listing carries each reel's thumbnail but neither its video
+      # nor its timestamp, so a reel needs a second request to be downloadable.
+      # That request is made only when a key is missing from the library: a
+      # rerun over an archived account makes none of them.
+      #
+      # `since` cannot end the walk early. The listing has no timestamp to
+      # compare, and the only row that carries one is the row a request has
+      # already been spent on -- so the pages are walked to the end and Session
+      # drops what is too old.
+      def walk_reels(user_id, since:, present:)
+        api.reels(user_id).each do |summary|
+          pk = summary['pk'] or next
+          next if present && Media.keys_for(pk).all? { present.call('reels', it) }
+
+          row = api.media(pk) or next
+          yield row
         end
       rescue ApiError => e
-        @log.warn("timeline: #{e.message} -- continuing without it")
+        @log.warn("reels: #{e.message} -- continuing without it")
       end
 
       def rows_for(post_type, user_id)

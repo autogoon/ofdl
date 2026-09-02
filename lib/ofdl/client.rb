@@ -65,6 +65,20 @@ module OFDL
       end
     end
 
+    # A form POST to a fixed URL, for the one Instagram listing with no REST
+    # endpoint. `form` is a hash; the caller decides what goes in it, including
+    # whatever per-page-load token the endpoint requires.
+    def post(url, form, extra: {})
+      path = URI(url).path
+      with_retries(url) do
+        @rate_limiter.wait
+        sent = headers(path).merge('content-type' => 'application/x-www-form-urlencoded').merge(extra)
+        @stats&.bump(:requests)
+        @log.request(path)
+        handle(@transport.post(url, sent, URI.encode_www_form(form)), url)
+      end
+    end
+
     private
 
     # The signed string is the /api2/v2 path plus the serialised query, and
