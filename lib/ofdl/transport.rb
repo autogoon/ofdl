@@ -35,6 +35,20 @@ module OFDL
       MAX_TIME = 60
       DOWNLOAD_MAX_TIME = 3600
 
+      # A transfer that connects and then stops sending raises nothing and
+      # holds its worker until DOWNLOAD_MAX_TIME, an hour later. Under
+      # STALL_BYTES a second for this long, curl gives up instead.
+      #
+      # The threshold is low enough that a slow mobile-tethered download is not
+      # mistaken for a stalled one: 30 seconds under one byte a second is a
+      # transfer that has stopped, not one that is merely slow.
+      STALL_SECONDS = 30
+      STALL_BYTES = 1
+
+      # curl's exit code for giving up on a transfer, whether on --max-time or
+      # on the speed floor above.
+      TIMEOUT_EXIT = 28
+
       attr_reader :binary, :target
 
       def initialize(binary:, target:)
@@ -125,12 +139,20 @@ module OFDL
         argv = command(url, headers, DOWNLOAD_MAX_TIME) + ['--output', destination.to_s]
         argv += ['--dump-header', dump_headers.to_s] if dump_headers
         out, err, status = run(argv)
-        raise DownloadError, "#{@binary} failed (#{status.exitstatus}): #{err.strip}" unless status.success?
+        raise download_failure(status, err) unless status.success?
 
         out.strip.split(' ', 2).first.to_i
       end
 
       private
+
+      # A timed-out transfer is worth asking for again -- the bytes stopped
+      # arriving, which the next attempt may not repeat. Every other curl
+      # failure is a fact about the request, so retrying it repeats the answer.
+      def download_failure(status, err)
+        DownloadError.new("#{@binary} failed (#{status.exitstatus}): #{err.strip}",
+                          retryable: status.exitstatus == TIMEOUT_EXIT)
+      end
 
       # The body goes to a temporary file rather than to stdout, which carries
       # the status line `--write-out` prints.
@@ -178,6 +200,8 @@ module OFDL
           '--silent', '--show-error',
           '--connect-timeout', CONNECT_TIMEOUT.to_s,
           '--max-time', max_time.to_s,
+          '--speed-limit', STALL_BYTES.to_s,
+          '--speed-time', STALL_SECONDS.to_s,
           '--write-out', '%{http_code} %{content_type}',
           *headers.flat_map { |key, value| ['--header', "#{key}: #{value}"] },
           url
