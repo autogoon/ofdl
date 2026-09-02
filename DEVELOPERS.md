@@ -10,8 +10,8 @@ Cloudflare. For installing, running and configuring it, see
 rake test
 ```
 
-All offline - Nothing in the suite contacts OnlyFans, and no captured request is
-committed to it.
+All offline - Nothing in the suite reaches the network, and no captured request
+is committed to this repo.
 
 ## Tooling
 
@@ -44,8 +44,7 @@ file is handed to a formatter this repo has no config for.
 This repo is public. What it archives is not: no creator username, account or
 media ID, subscription count, real `output_dir`, or capture still carrying a
 live session belongs in a commit, a test fixture, a commit message or a PR
-description. Naming OnlyFans is the point of the project; naming an account is
-not.
+description. The apps are named throughout this repo; an account never is.
 
 `/personal-check` enforces that. It scans a branch — every revision of every
 file it changed, not just the final diff — plus commit messages and any open
@@ -55,6 +54,68 @@ git history and what removing it would take.
 The rules it enforces are in
 [`.claude/skills/personal-check/SKILL.md`](./.claude/skills/personal-check/SKILL.md);
 when to run it is in [CLAUDE.md](./CLAUDE.md).
+
+## One run, two apps
+
+`Session` owns what every app shares: the transport, the library, the scratch
+directory, the download pool and the counters. A source adapter owns what one
+app does alone — its cookies, its request signing, which feeds it has and how
+each is paged. `Session#adapter_for` builds one per app, and `Sources::OnlyFans`
+and `Sources::Instagram` are the two.
+
+An adapter answers:
+
+| Method                          | Returns                                           |
+| ------------------------------- | ------------------------------------------------- |
+| `key`                           | `onlyfans`, `instagram`                           |
+| `post_types`                    | the feeds this app has                            |
+| `creators`                      | targets to archive with no name given             |
+| `resolve(username)`             | one target                                        |
+| `each_row(post_types, id, ...)` | yields `[post_type, row]`                         |
+| `items_from(row, post_type:)`   | `Item`s                                           |
+| `advert_reason(row, creator:)`  | why a post is an advert, or nil                   |
+| `status_lines`                  | yields the label/value pairs `ofdl status` prints |
+
+`each_row` takes every post type at once rather than one per call, because one
+listing can carry several: an Instagram grid holds reels beside plain posts.
+OnlyFans reads one feed per post type and tags each row with the type it asked
+for.
+
+`Config::POST_TYPES` is every post type any app has. Which of them one app
+actually has is that app's own list, and `Session#stream` walks the two
+intersected — so naming a post type only one app carries selects it there and is
+absent on the other rather than failing the run.
+
+### Instagram
+
+Most endpoints are the REST ones the web client calls, and they need the cookies
+and `x-ig-app-id` and nothing else. The exception is the reels tab, which
+Instagram serves only over GraphQL: a `doc_id`, and `fb_dtsg`, which is minted
+into every HTML page the site serves. `Sources::Instagram::Tokens` scrapes
+`fb_dtsg` once per run, the way `SiteState` reads `x-of-rev` for OnlyFans.
+
+The grid and the reels tab are separate listings, and an account's reels need
+not appear in its grid, so `posts` walks one and `reels` the other. A reel in
+both is deduplicated by key.
+
+`after` goes beside `data` in that query's variables, not inside it. Inside, the
+endpoint ignores it and answers every request with the first page while still
+returning a fresh cursor and `has_next_page` true.
+
+The reels listing carries each reel's thumbnail but neither its video nor its
+timestamp, so a downloadable reel costs a second request to `/media/<pk>/info/`.
+`Library#key?` answers presence from a key alone, `Session` passes that as
+`present` into `each_row`, and `walk_reels` asks before it fetches: a rerun over
+an archived account spends one request on the listing and none on the reels.
+
+A reel therefore produces two items from one row, the video and its thumbnail.
+Both would key as `<pk>_<pk>`, so the thumbnail's media id carries a `_thumb`
+role and `Library::MEDIA_ID` matches it. OnlyFans media ids are all digits, so
+its keys and filenames are unchanged.
+
+`--since` cannot end the reels walk early: the listing carries no timestamp to
+compare, and the only row that has one is the row a request has already been
+spent on. The pages are walked to the end and `Session` drops what is too old.
 
 ## Enumeration and downloading run together
 
@@ -84,9 +145,9 @@ unmade requests are a saving only for a run that doesn't finish — a completed
 run lists exactly the same pages either way.
 
 The bound doesn't slow the request rate down. Every API call goes through one
-`RateLimiter` on the `Client`, so `requests_per_second` is what decides how fast
-ofdl talks to OnlyFans and therefore how the traffic looks to them. The queue
-bound only decides how far ahead of the downloads the listing is allowed to get.
+`RateLimiter` on the `Client`, so `requests_per_second` sets the request rate an
+app sees. The queue bound sets only how far ahead of the downloads the listing
+is allowed to get.
 
 The producer also does the deduplication — the same media often appears in both
 a timeline and the paid feed, and the first sighting wins — and the check for
@@ -288,8 +349,8 @@ Apple silicon, minor/build/patch always `0.0.0`), so the major version out of
 the app bundle rebuilds it exactly. There's no setting for it.
 
 Available profiles are read from the wrappers beside the binary and then
-confirmed against curl itself with a `file://` URL, so checking a target costs
-no network request and can't touch OnlyFans.
+confirmed against curl itself with a `file://` URL, so checking a target makes
+no network request and sends nothing to an app.
 
 ### Fetch metadata is corrected
 

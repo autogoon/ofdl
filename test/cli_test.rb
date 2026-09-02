@@ -188,14 +188,22 @@ module OFDL
 
     # A real OnlyFans adapter with the subscription list already answered, so
     # the resolution under test is the adapter's own.
-    def resolve(names, sources: Source::ALL)
+    #
+    # `adapter_for` raises for any other app rather than building one: a real
+    # adapter would read the live cookie jar and reach the network, which no
+    # test may do.
+    def resolve(names, sources: [Source::ONLYFANS])
       config = Config.new(Pathname(Dir.mktmpdir('ofdl-cli')).join('config.json'))
       session = Session.new(config:, log: silent_log)
       adapter = Sources::OnlyFans.new(config:, log: silent_log, stats: session.stats, transport: nil)
       api = Object.new
       api.define_singleton_method(:subscriptions) { ROWS }
       adapter.instance_variable_set(:@api, api)
-      session.instance_variable_set(:@adapters, { Source::ONLYFANS => adapter })
+      session.define_singleton_method(:adapter_for) do |key|
+        raise "test built a live #{key} adapter" unless key == Source::ONLYFANS
+
+        adapter
+      end
 
       cli = CLI.new
       cli.instance_variable_set(:@session, session)
@@ -220,6 +228,20 @@ module OFDL
 
     def test_no_names_and_no_apps_means_no_targets
       assert_empty(resolve([], sources: []))
+    end
+
+    # Being signed in to one of two apps still lists the one; see
+    # CLI#creators_on.
+    def test_an_app_with_no_cookies_contributes_nothing_rather_than_failing
+      cli = CLI.new
+      cli.instance_variable_set(:@log, silent_log)
+      session = Object.new
+      adapter = Object.new
+      adapter.define_singleton_method(:creators) { raise CookieError, "incomplete cookies\nSign in." }
+      session.define_singleton_method(:adapter_for) { |_key| adapter }
+      cli.instance_variable_set(:@session, session)
+
+      assert_empty(cli.send(:creators_on, 'instagram'))
     end
 
     def test_names_select_a_subset

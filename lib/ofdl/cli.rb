@@ -305,9 +305,15 @@ module OFDL
 
     # Memoised per app: resolving several names must not list one app's
     # creators once per name.
+    #
+    # An app with no cookies contributes nothing rather than ending the
+    # command, so being signed in to one of two apps still lists the one.
     def creators_on(source)
       @creators ||= {}
       @creators[source] ||= session.adapter_for(source).creators
+    rescue CookieError => e
+      @log.warn("#{source}: #{e.message.lines.first.strip}")
+      @creators[source] = []
     end
 
     # No names means every creator on every app the run covers.

@@ -35,14 +35,22 @@ module OFDL
 
       def post_types = POST_TYPES
 
-      # No list of your own to enumerate: `ofdl fetch` on Instagram takes names.
-      def creators = []
+      # The accounts you follow, which `ofdl subs` prints and `ofdl fetch`
+      # walks when no names are given.
+      def creators
+        api.following(viewer_id).map { { source: KEY, id: it['pk'], username: it['username'] } }
+      end
 
-      # Any public account, whether or not you follow it. A private account you
-      # do not follow fails on the first request instead, because whether it
-      # can be read is the account's setting rather than a property of the name.
+      # The signed-in account's own id, which Instagram keeps in a cookie.
+      def viewer_id = jar['ds_user_id']
+
+      # Any account, followed or not: Instagram shows a public account to
+      # anyone, so following decides how much is visible rather than whether
+      # anything is. #note_visibility says which case this is.
       def resolve(username)
-        { source: KEY, id: api.user(username)['pk'], username: }
+        row = api.user(username)
+        note_visibility(username, row['pk'])
+        { source: KEY, id: row['pk'], username: }
       end
 
       def items_from(row, post_type:) = Media.from_row(row, post_type:)
@@ -88,6 +96,25 @@ module OFDL
       def api = @api ||= Api.new(client:, tokens:)
 
       private
+
+      # One request, made only for a creator named on the command line: the
+      # follow list needs no such check, because being on it is the answer.
+      #
+      # A private account shows a non-follower nothing at all, so that case is
+      # named apart from a public one, where not following costs some of the
+      # feeds rather than all of them.
+      def note_visibility(username, user_id)
+        status = api.friendship(user_id)
+        return if status['following']
+
+        if status['is_private']
+          @log.warn("  #{KEY}/#{username} is private and you do not follow it -- nothing will be readable")
+        else
+          @log.warn("  #{KEY}/#{username}: follow this creator to get all of their content")
+        end
+      rescue ApiError => e
+        @log.debug("#{username}: could not read follow status (#{e.message})")
+      end
 
       def walk_timeline(user_id, since:, &)
         api.timeline(user_id, since:).each(&)

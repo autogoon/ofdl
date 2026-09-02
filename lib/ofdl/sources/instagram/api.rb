@@ -13,12 +13,37 @@ module OFDL
       class Api
         PAGE = 12
 
+        # The page size the web client asks for on a list of accounts.
+        PAGE_USERS = 25
+
         GRAPHQL_URL = 'https://www.instagram.com/api/graphql'
 
         def initialize(client:, tokens: nil)
           @client = client
           @tokens = tokens
         end
+
+        # The accounts one viewer follows. `user_id` is the signed-in viewer's
+        # own id, which is the `ds_user_id` cookie.
+        def following(user_id)
+          Enumerator.new do |yielder|
+            cursor = nil
+            loop do
+              params = { count: PAGE_USERS }
+              params[:max_id] = cursor if cursor
+              page = @client.get("/friendships/#{user_id}/following/", params)
+              rows = Array(page['users'])
+              rows.each { yielder << it }
+
+              cursor = page['next_max_id']
+              break if rows.empty?
+              break unless page['has_more'] && cursor
+            end
+          end
+        end
+
+        # Whether the viewer follows one account, and whether it is private.
+        def friendship(user_id) = @client.get("/friendships/show/#{user_id}/")
 
         # The profile, including the id stories and highlights are keyed by.
         def user(username)
@@ -47,7 +72,7 @@ module OFDL
           end
         end
 
-        # The reels tab, which is not the timeline: most accounts' reels do not
+        # The reels tab, which is not the timeline: an account's reels need not
         # appear in the grid #timeline reads.
         #
         # The reels tab is GraphQL, because Instagram serves no REST endpoint

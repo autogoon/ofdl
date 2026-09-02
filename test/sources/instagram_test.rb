@@ -18,7 +18,15 @@ module OFDL
           @fetched = []
         end
 
+        attr_accessor :follows, :friendship_rows
+
         def reels(_user_id) = @reels.map { { 'pk' => it } }
+
+        def following(_user_id) = Array(@follows)
+
+        def user(username) = { 'pk' => "id-#{username}", 'username' => username }
+
+        def friendship(user_id) = (@friendship_rows || {}).fetch(user_id, { 'following' => true })
 
         def timeline(_user_id, since: nil) = @timeline
 
@@ -114,10 +122,61 @@ module OFDL
         assert_equal([%w[reels 20]], rows(source(api), %w[reels]))
       end
 
-      # A creator is named on the command line rather than found in a list, so
-      # there is no list to enumerate.
-      def test_there_are_no_creators_to_enumerate
-        assert_empty(source(FakeApi.new).creators)
+      # Following is the list `ofdl subs` prints and `ofdl fetch` walks with no
+      # names given.
+      def test_creators_are_the_accounts_you_follow
+        api = FakeApi.new
+        api.follows = [{ 'pk' => '10', 'username' => 'alice' }, { 'pk' => '20', 'username' => 'bob' }]
+        subject = source(api)
+        subject.define_singleton_method(:viewer_id) { '99' }
+
+        assert_equal([{ source: 'instagram', id: '10', username: 'alice' },
+                      { source: 'instagram', id: '20', username: 'bob' }], subject.creators)
+      end
+
+      def test_a_named_creator_resolves_whether_or_not_you_follow_them
+        api = FakeApi.new
+        api.friendship_rows = { 'id-alice' => { 'following' => false, 'is_private' => false } }
+
+        assert_equal({ source: 'instagram', id: 'id-alice', username: 'alice' }, source(api).resolve('alice'))
+      end
+
+      # Following is not what makes an account readable, so not following is
+      # said out loud rather than refused.
+      def test_not_following_is_warned_about
+        api = FakeApi.new
+        api.friendship_rows = { 'id-alice' => { 'following' => false, 'is_private' => false } }
+        said = []
+        subject = source(api)
+        subject.instance_variable_get(:@log).define_singleton_method(:warn) { |text| said << text }
+
+        subject.resolve('alice')
+
+        assert_match(/follow/, said.join)
+      end
+
+      def test_following_says_nothing
+        said = []
+        subject = source(FakeApi.new)
+        subject.instance_variable_get(:@log).define_singleton_method(:warn) { |text| said << text }
+
+        subject.resolve('alice')
+
+        assert_empty(said)
+      end
+
+      # A private account you do not follow shows a non-follower nothing, so the
+      # warning says that rather than suggesting a follow would top it up.
+      def test_a_private_account_you_do_not_follow_is_named_as_unreadable
+        api = FakeApi.new
+        api.friendship_rows = { 'id-alice' => { 'following' => false, 'is_private' => true } }
+        said = []
+        subject = source(api)
+        subject.instance_variable_get(:@log).define_singleton_method(:warn) { |text| said << text }
+
+        subject.resolve('alice')
+
+        assert_match(/private/, said.join)
       end
 
       # An @handle in a caption is ordinary here; see Advert for the OnlyFans

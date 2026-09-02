@@ -4,7 +4,7 @@
   <img src="./docs/screenshot.png" alt="The ofdl dashboard: the stats panel, a photo previewed in the terminal, the request log, and the per-worker download rows" width="820">
 </p>
 
-A local archiver for OnlyFans subscriptions, with a live terminal dashboard.
+A local archiver for OnlyFans and Instagram, with a live terminal dashboard.
 Ruby, no gems, no database, no server component.
 
 If you want to know how it works inside, that's in
@@ -14,8 +14,10 @@ If you want to know how it works inside, that's in
 
 **Does:**
 
-- Photos, GIFs, audio, and unprotected video, from timelines, DMs, stories,
-  highlights, archived posts and purchased posts.
+- Photos, GIFs, audio, and unprotected video.
+- Two apps. OnlyFans covers timelines, DMs, stories, highlights, archived posts
+  and purchased posts; Instagram covers the grid, reels, stories, highlights and
+  the profile picture. See [Apps and post types](#apps-and-post-types).
 - Resumable, deduplicated, rate limited.
 - Each downloaded photo is previewed in the terminal.
 - Skips posts advertising another creator — another `@handle`, or a link to
@@ -26,6 +28,7 @@ If you want to know how it works inside, that's in
 
 - DRM-protected video. Those items are detected, reported and skipped. No
   setting downloads them — see [Protected video](#protected-video).
+- Instagram DMs, or anything from an account you cannot already see signed in.
 
 ## Requirements
 
@@ -36,7 +39,7 @@ and submit a PR!
 | Dependency         | Why                                          | Install                         |
 | ------------------ | -------------------------------------------- | ------------------------------- |
 | Ruby 4.0+          | runs it                                      | `rbenv` (macOS ships Ruby 2.6)  |
-| Google Chrome      | your session cookies, and its version string | signed in to OnlyFans           |
+| Google Chrome      | your session cookies, and its version string | signed in to the apps you fetch |
 | `curl-impersonate` | every HTTP request ofdl makes                | `brew install curl-impersonate` |
 | `sips`             | resizes images for the terminal preview      | ships with macOS                |
 | `ffmpeg`           | joins the few videos served in segments      | `brew install ffmpeg`           |
@@ -47,6 +50,10 @@ keys can point elsewhere.
 
 Plain `curl` cannot stand in for `curl-impersonate`: OnlyFans refuses requests
 that don't look like Chrome, down to the TLS handshake.
+
+You sign in to each app in Chrome. ofdl reads the cookies that are already there
+and never sees a password. For an app you are not signed in to, `ofdl status`
+fails and names the missing cookies.
 
 ## Install
 
@@ -82,16 +89,18 @@ ofdl status                  # check the tools, output_dir, and the session
 [Configuration](#configuration).
 
 Run `status` first. It reports the tools it found, some info about the terminal,
-and `output_dir` with whether it is usable -- then reads your cookies, loads the
-signing rules.
+and `output_dir` with whether it is usable — then a section per app, with the
+cookies it read and whether they authenticate. `--source` narrows the report to
+one app.
 
 `ofdl status --library-stats` also counts the creators, files, bytes and DRM
 markers under `output_dir`. That counts every file one at a time, so on a
 mounted share it costs a network round trip per file, which is why it is off by
 default.
 
-It makes one real request to `/users/me`. If there is a problem with
-authentication, that request will fail and is reported.
+Each app's section ends in a real request. If there is a problem with
+authentication that request fails and is reported, after the cookie lines that
+show what was sent.
 
 The first command that reads your cookies makes macOS ask for your login
 password, to unlock the `Chrome Safe Storage` keychain entry Chrome encrypts
@@ -104,30 +113,74 @@ not come back. Cancel it and the run stops with
 ```sh
 ofdl status                                # setup, output_dir, and session check
 ofdl status --library-stats                # also count the files in output_dir
-ofdl subs                                  # who you are subscribed to
-ofdl fetch                                 # every subscription, configured post types
+ofdl subs                                  # OnlyFans subscriptions, Instagram follows
+ofdl fetch                                 # all of them, configured post types
 ofdl fetch someone                         # one creator
 ofdl fetch someone other                   # several creators
 ofdl fetch someone --since 2026-01-01      # only recent posts
 ofdl fetch --post-types posts,messages     # everything, narrowed
 ofdl fetch someone --include-ads           # keep the posts advertising others
-ofdl fetch onlyfans/someone                # name the app the creator is on
-ofdl fetch --source of                     # every creator on one app
+ofdl fetch instagram/someone               # name the app the creator is on
+ofdl fetch ig/someone --post-types reels   # short form, one post type
+ofdl fetch --source of                     # one app only
 ofdl subs --source of                      # the same filter, on subs
 ofdl --help                                # every command and option
 ```
 
-A name may carry the app the creator is on — `onlyfans/someone`, or `of/someone`
-— and without one means `onlyfans`. `ofdl subs` prints names in that form, so a
-line can be copied straight onto a `fetch`.
+A name may carry the app the creator is on — `instagram/someone`, or
+`ig/someone` — and without one means `onlyfans`. The short forms are `of`, and
+`i` or `ig`. `ofdl subs` prints names in that form, so a line can be copied
+straight onto a `fetch`.
 
-A name may also carry a leading `@`, and case is ignored; it is matched against
-`ofdl subs`, and an unknown name is an error rather than a silent skip.
+A name may also carry a leading `@`, and case is ignored. An OnlyFans name is
+matched against your subscriptions, and one you are not subscribed to is an
+error rather than a silent skip.
+
+An Instagram name is matched against nothing, because following an account is
+not what makes it readable: any public account can be archived. Naming one you
+don't follow prints
+
+```text
+instagram/someone: follow this creator to get all of their content
+```
+
+and archives what is visible to a non-follower. A private account you don't
+follow shows nothing at all, and says so.
+
+`ofdl subs` lists your OnlyFans subscriptions and the accounts you follow on
+Instagram, and bare `ofdl fetch` archives both. Being signed in to one app and
+not the other is not an error: the app with no cookies is named and skipped.
 
 Ctrl-C stops immediately. The stats panel is printed once more, the scratch
 directory is removed, and nothing partially downloaded is kept. Rerun and
 nothing is downloaded twice: the listing starts again, and every item already in
 `output_dir` is passed over.
+
+## Apps and post types
+
+A post type is one feed on one app. `--post-types` narrows a run to some of
+them, and `post_types` in the config sets the default.
+
+| Post type    | OnlyFans        | Instagram           |
+| ------------ | --------------- | ------------------- |
+| `posts`      | the timeline    | the grid            |
+| `messages`   | DMs             | —                   |
+| `stories`    | stories         | stories             |
+| `highlights` | highlights      | highlights          |
+| `paid`       | purchased posts | —                   |
+| `archived`   | archived posts  | —                   |
+| `reels`      | —               | the reels tab       |
+| `avatar`     | —               | the profile picture |
+
+Naming a post type one app does not have selects it on the app that does and is
+absent on the other, so `--post-types posts,reels` over both apps is not an
+error.
+
+An Instagram reel is downloaded as two files, its video and its thumbnail. The
+thumbnail's name carries `_thumb` so the two do not collide.
+
+Instagram's grid and reels tab are separate listings, and a reel can appear in
+both; the second sighting is passed over as a duplicate.
 
 ## Where the files go
 
@@ -139,7 +192,7 @@ and one per post type inside that:
            │        │       │     │          │   └ media id
            │        │       │     │          └ post id
            │        │       │     └ the date it was posted
-           │        │       └ posts, messages, stories, highlights, paid, archived
+           │        │       └ the post type; see Apps and post types
            │        └ the creator's username
            └ the app the creator is on
 ```
@@ -190,23 +243,38 @@ set what you actually want to control, and leave the rest out:
 If the file is unreadable, or isn't a JSON object, ofdl says so and stops.
 `rules` is the one key ofdl writes back for itself; the rest is yours.
 
-| Key                   | Default                                                | Meaning                                                |
-| --------------------- | ------------------------------------------------------ | ------------------------------------------------------ |
-| `output_dir`          | **required**                                           | download root; **must already exist**                  |
-| `chrome_profile`      | `Default`                                              | Chrome profile directory name                          |
-| `concurrency`         | `4`                                                    | parallel downloads                                     |
-| `requests_per_second` | `2.0`                                                  | API pacing                                             |
-| `rules_url`           | `https://r2.hlsdownloader.com/win32/dynamicRules.json` | where to refetch signing parameters                    |
-| `rules_file`          | unset                                                  | pinned local rules; disables `rules_url`               |
-| `rules`               | written automatically                                  | cached signing parameters                              |
-| `post_types`          | all six                                                | `posts, messages, stories, highlights, paid, archived` |
-| `skip_protected`      | `true`                                                 | skip Widevine video                                    |
-| `mark_protected`      | `true`                                                 | leave `.drm` markers                                   |
-| `skip_ads`            | `true`                                                 | skip posts advertising another creator                 |
-| `images`              | `true`                                                 | preview downloads in the terminal                      |
-| `refresh`             | `0.05`                                                 | seconds between dashboard repaints                     |
-| `ffmpeg`              | `ffmpeg`                                               | path to ffmpeg                                         |
-| `curl_impersonate`    | `curl-impersonate`                                     | path to curl-impersonate                               |
+| Key                   | Default                                                | Meaning                                  |
+| --------------------- | ------------------------------------------------------ | ---------------------------------------- |
+| `output_dir`          | **required**                                           | download root; **must already exist**    |
+| `chrome_profile`      | `Default`                                              | Chrome profile directory name            |
+| `concurrency`         | `4`                                                    | parallel downloads                       |
+| `requests_per_second` | `2.0`                                                  | API pacing                               |
+| `rules_url`           | `https://r2.hlsdownloader.com/win32/dynamicRules.json` | where to refetch signing parameters      |
+| `rules_file`          | unset                                                  | pinned local rules; disables `rules_url` |
+| `rules`               | written automatically                                  | cached signing parameters                |
+| `post_types`          | every post type each app has                           | a list, or a map keyed by app            |
+| `skip_protected`      | `true`                                                 | skip Widevine video                      |
+| `mark_protected`      | `true`                                                 | leave `.drm` markers                     |
+| `skip_ads`            | `true`                                                 | skip posts advertising another creator   |
+| `images`              | `true`                                                 | preview downloads in the terminal        |
+| `refresh`             | `0.05`                                                 | seconds between dashboard repaints       |
+| `ffmpeg`              | `ffmpeg`                                               | path to ffmpeg                           |
+| `curl_impersonate`    | `curl-impersonate`                                     | path to curl-impersonate                 |
+
+`post_types` takes a list, which applies to every app:
+
+```json
+{ "post_types": ["posts", "reels"] }
+```
+
+or a map, which gives one app its own. An app left out of the map keeps every
+post type it has:
+
+```json
+{ "post_types": { "onlyfans": ["posts", "messages"] } }
+```
+
+Which apps a run covers is `--source`, not a config key.
 
 `chrome_profile` is the profile's directory name, not the name Chrome shows:
 `Default` for the first profile, `Profile 1` for the next. It is the last
@@ -242,9 +310,8 @@ Three columns, each read downward.
 has left the queue.
 
 - `queued` — items waiting, capped at 256. Listing pauses at the cap and resumes
-  as the workers take items off it. The cap is to help avoiding OnlyFans
-  classifying ofdl's traffic as unusual, since API request frequency is much
-  reduced.
+  as the workers take items off it. The cap holds the request rate down, so an
+  app is less likely to classify the traffic as unusual.
 - `successful` — downloads that completed.
 - `skipped` — items never attempted, for one of two reasons: DRM video, and
   posts advertising another creator. The two are named in brackets once there
@@ -297,6 +364,9 @@ them.
 
 ## Adverts
 
+OnlyFans only. An `@handle` in an Instagram caption is ordinary, so nothing
+there is read as an advert and `--include-ads` changes nothing.
+
 Creators advertise each other. An advert names the other creator in the post
 text, as an `@handle` or as a link to their onlyfans.com page. A post carrying
 either form is passed over whole, and its media counts under `skipped` as `ads`.
@@ -315,25 +385,29 @@ keeps them for good. `-v` prints the handle or URL that matched each post.
 
 ## Rate limiting
 
-`requests_per_second` defaults to `2.0`. Users are signed out of OnlyFans after
-heavy sessions, which is consistent with volume-based session invalidation.
-Raising it is your call. If you are signed out, sign in again in Chrome and
-rerun -- what is already in `output_dir` is not fetched a second time.
+`requests_per_second` defaults to `2.0` and paces every app the same way. Users
+are signed out of OnlyFans after heavy sessions, which is consistent with
+volume-based session invalidation, so raising `requests_per_second` makes being
+signed out more likely. If you are signed out, sign in again in Chrome and rerun
+-- what is already in `output_dir` is not fetched a second time.
 
 ## Privacy
 
 These are the network calls ofdl makes:
 
-| Destination              | Carries                                 | Why                               |
-| ------------------------ | --------------------------------------- | --------------------------------- |
-| `onlyfans.com/api2/v2`   | your session cookies                    | listing posts, messages, stories  |
-| `onlyfans.com/`          | nothing — no cookies                    | the build revision for `x-of-rev` |
-| `cdn2.onlyfans.com/hash` | your `auth_id` in the query, no cookies | the value of `x-hash`             |
-| media URLs               | nothing — no cookies, no headers        | the actual files                  |
-| `rules_url`              | nothing — plain GET                     | current API signing parameters    |
+| Destination                 | Carries                                 | Why                                |
+| --------------------------- | --------------------------------------- | ---------------------------------- |
+| `onlyfans.com/api2/v2`      | your OnlyFans cookies                   | listing posts, messages, stories   |
+| `onlyfans.com/`             | nothing — no cookies                    | the build revision for `x-of-rev`  |
+| `cdn2.onlyfans.com/hash`    | your `auth_id` in the query, no cookies | the value of `x-hash`              |
+| `instagram.com/api/v1`      | your Instagram cookies                  | listing the grid, stories, reels   |
+| `instagram.com/api/graphql` | your Instagram cookies                  | listing the reels tab              |
+| `instagram.com/`            | your Instagram cookies                  | the page token the reels tab needs |
+| media URLs                  | nothing — no cookies, no headers        | the actual files                   |
+| `rules_url`                 | nothing — plain GET                     | current API signing parameters     |
 
-Your cookies are read from the local Chrome profile, kept in memory, and sent
-only to onlyfans.com. ofdl never writes them to disk.
+Each app's cookies are read from the local Chrome profile, kept in memory, and
+sent only to that app's own host. ofdl never writes them to disk.
 
 `rules_url` defaults to the CDN of the Onlyfans-Downloader browser extension,
 because that's where current values can be found. The extension has been removed
@@ -349,6 +423,6 @@ and ofdl never goes to the network for rules again.
 
 ## Legal
 
-Downloading content you subscribe to, for personal use, is between you and
-OnlyFans' terms of service. Redistributing a creator's work is not covered by
-your subscription and is not what this is for.
+Each app's terms of service govern downloading content you can already see for
+personal use. A subscription does not grant the right to redistribute a
+creator's work.
