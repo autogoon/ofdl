@@ -161,6 +161,47 @@ module OFDL
       assert_path_exists(@out.join('onlyfans', 'creator', 'posts', '2026-01-14_111_444.jpg'))
     end
 
+    # Stalls once, then succeeds. A transfer that goes quiet is the reason
+    # Transport raises a retryable error; this is the path that consumes it.
+    class StallingTransport < FakeTransport
+      def initialize(stalls:, **rest)
+        super(**rest)
+        @stalls = stalls
+      end
+
+      def download(url, destination, dump_headers: nil)
+        if @stalls.positive?
+          @stalls -= 1
+          raise DownloadError.new('curl-impersonate failed (28): Operation too slow', retryable: true)
+        end
+        super
+      end
+    end
+
+    def test_a_stalled_download_is_retried_and_can_succeed
+      transport = StallingTransport.new(stalls: 1)
+      subject = downloader(transport:)
+      subject.define_singleton_method(:sleep) { |_seconds| nil }
+
+      outcome = subject.call(item, username: 'creator')
+
+      assert_equal(:downloaded, outcome.status, outcome.message)
+      assert_path_exists(@out.join('onlyfans', 'creator', 'posts', '2026-01-14_111_222.jpg'))
+    end
+
+    # Three stalls exhausts Downloader::MAX_ATTEMPTS.
+    def test_a_download_that_keeps_stalling_fails_rather_than_looping
+      transport = StallingTransport.new(stalls: 99)
+      subject = downloader(transport:)
+      subject.define_singleton_method(:sleep) { |_seconds| nil }
+
+      outcome = subject.call(item, username: 'creator')
+
+      assert_equal(:failed, outcome.status)
+      assert_match(/too slow/, outcome.message)
+      refute_path_exists(@scratch.path_for(item))
+    end
+
     def test_a_failed_download_leaves_nothing_behind
       outcome = downloader(transport: FakeTransport.new(status: 404)).call(item, username: 'creator')
 

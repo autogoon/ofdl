@@ -248,6 +248,14 @@ error says it's retryable; anything else fails on the first attempt.
 `Session#consume` catches every other `StandardError` too, so a bug in a worker
 costs one item instead of quietly taking a worker out of the pool.
 
+A transfer that connects and then stops sending raises nothing on its own, so
+curl is given a speed floor: under `STALL_BYTES` a second for `STALL_SECONDS`,
+it exits 28 and the download becomes a retryable failure. Without that floor a
+stalled worker holds its slot until `DOWNLOAD_MAX_TIME`, an hour later, with the
+progress bar frozen part-way. Exit 28 is the one curl status treated as
+retryable, because it says the bytes stopped rather than that the request was
+wrong.
+
 ### Image previews
 
 Each worker owns a vertical slice of the image zone and draws into it directly,

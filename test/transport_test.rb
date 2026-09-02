@@ -30,6 +30,46 @@ module OFDL
       assert_equal("chrome#{targets.max}", transport.target)
     end
 
+    # A transfer that connects and then goes quiet never raises on its own, so
+    # curl is told to give up on one; see CurlImpersonate::STALL_SECONDS.
+    def test_a_download_gives_curl_a_no_activity_timeout
+      argv = curl.send(:command, 'https://cdn.example.com/a.mp4', {},
+                       Transport::CurlImpersonate::DOWNLOAD_MAX_TIME)
+
+      assert_includes(argv, '--speed-time')
+      assert_includes(argv, '--speed-limit')
+      assert_equal(Transport::CurlImpersonate::STALL_SECONDS.to_s, argv[argv.index('--speed-time') + 1])
+    end
+
+    # curl exits 28 when it gives up on a stalled or over-long transfer. The
+    # bytes stopped arriving; asking again is exactly the right response, so
+    # this one is retryable where other curl failures are not.
+    def test_a_stalled_download_is_retryable
+      transport = curl
+      transport.define_singleton_method(:run) do |_argv|
+        [+'', +'Operation too slow', Struct.new(:success?, :exitstatus).new(false, 28)]
+      end
+
+      error = assert_raises(DownloadError) do
+        transport.download('https://cdn.example.com/a.mp4', Pathname('/tmp/ofdl-nope'))
+      end
+
+      assert_predicate(error, :retryable?)
+    end
+
+    def test_other_curl_failures_are_not_retryable
+      transport = curl
+      transport.define_singleton_method(:run) do |_argv|
+        [+'', +'could not resolve host', Struct.new(:success?, :exitstatus).new(false, 6)]
+      end
+
+      error = assert_raises(DownloadError) do
+        transport.download('https://cdn.example.com/a.mp4', Pathname('/tmp/ofdl-nope'))
+      end
+
+      refute_predicate(error, :retryable?)
+    end
+
     def test_a_missing_binary_explains_how_to_install_it
       error = assert_raises(ConfigError) do
         Transport::CurlImpersonate.newest_chrome(binary: 'curl-impersonate-nope', log: silent_log)
