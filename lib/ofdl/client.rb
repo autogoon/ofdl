@@ -68,13 +68,17 @@ module OFDL
     # A form POST to a fixed URL, for the one Instagram listing with no REST
     # endpoint. `form` is a hash; the caller decides what goes in it, including
     # whatever per-page-load token the endpoint requires.
-    def post(url, form, extra: {})
+    #
+    # `label` is what the request log shows. A GET's path carries its query
+    # string and so says what was asked for; a POST's does not, and every call
+    # here would otherwise read as the same bare URL.
+    def post(url, form, extra: {}, label: nil)
       path = URI(url).path
       with_retries(url) do
         @rate_limiter.wait
         sent = headers(path).merge('content-type' => 'application/x-www-form-urlencoded').merge(extra)
         @stats&.bump(:requests)
-        @log.request(path)
+        @log.request(label || path)
         handle(@transport.post(url, sent, URI.encode_www_form(form)), url)
       end
     end

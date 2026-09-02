@@ -58,13 +58,19 @@ module OFDL
         def reels(user_id)
           Enumerator.new do |yielder|
             cursor = nil
+            number = 0
             loop do
-              page = reels_page(user_id, cursor)
+              number += 1
+              page = reels_page(user_id, cursor, number)
               edges = Array(page['edges'])
               edges.each { yielder << it.dig('node', 'media') }
 
               info = page['page_info'] || {}
               cursor = info['end_cursor']
+              # An empty page ends the walk whatever has_next_page says: a
+              # cursor that stops advancing would otherwise be requested until
+              # the run is killed.
+              break if edges.empty?
               break unless info['has_next_page'] && cursor
             end
           end
@@ -103,26 +109,30 @@ module OFDL
 
         private
 
-        def reels_page(user_id, cursor)
+        # `after` sits beside `data`, not inside it. Inside, the endpoint
+        # ignores it and answers every request with the first page, and the
+        # cursor it returns still changes each time -- so a walk that trusted
+        # `has_next_page` would request the same twelve reels for ever.
+        def reels_page(user_id, cursor, number)
           variables = {
-            data: { include_feed_video: true, page_size: PAGE, target_user_id: user_id.to_s }.tap do |data|
-              data[:after] = cursor if cursor
-            end,
+            data: { include_feed_video: true, page_size: PAGE, target_user_id: user_id.to_s },
             user_id: user_id.to_s,
             __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: false
           }
-          page = graphql(REELS_QUERY, variables)
+          variables[:after] = cursor if cursor
+          page = graphql(REELS_QUERY, variables, label: "reels page #{number}")
           page.dig('data', 'fetch__XDTUserDict', 'clips_connection') || {}
         end
 
         # The site sends a dozen underscore-prefixed fields with every GraphQL
         # call; these are the ones the endpoint rejects the request without.
-        def graphql(query, variables)
+        def graphql(query, variables, label:)
           @client.post(
             GRAPHQL_URL,
             { av: '0', __d: 'www', __user: '0', __a: '1', dpr: '2',
               fb_dtsg: @tokens.fb_dtsg, doc_id: query[:doc_id], variables: JSON.generate(variables) },
-            extra: { 'x-fb-friendly-name' => query[:name] }
+            extra: { 'x-fb-friendly-name' => query[:name] },
+            label:
           )
         end
 
