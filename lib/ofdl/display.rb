@@ -145,6 +145,13 @@ module OFDL
 
     def self.strip(text) = text.to_s.gsub(ANSI, '')
 
+    # A prefix, for a value printed to be compared rather than read: enough to
+    # check against the browser, not enough to reuse.
+    def self.truncate(value, length = 24)
+      string = value.to_s
+      string.length > length ? "#{string[0, length]}..." : string
+    end
+
     def self.humanize(bytes)
       units = %w[B KB MB GB TB]
       value = bytes.to_f

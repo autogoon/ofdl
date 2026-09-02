@@ -11,13 +11,15 @@ module OFDL
 
     def teardown = FileUtils.remove_entry(@dir)
 
-    def item(media_id: 222, extension: 'jpg', protected: false)
+    def item(media_id: 222, extension: 'jpg', protected: false, source: Source::ONLYFANS)
       Item.new(
-        media_id:, post_id: 111, source: 'posts', kind: 'photo',
+        media_id:, post_id: 111, source:, post_type: 'posts', kind: 'photo',
         posted_at: Time.utc(2026, 1, 14), url: 'https://cdn.example.com/a.jpg',
         protected:, extension:
       )
     end
+
+    def only(*pairs) = pairs.map { { source: it.first, username: it.last } }
 
     def test_resumption_reads_the_filesystem
       subject = item
@@ -38,7 +40,7 @@ module OFDL
 
       fresh = Library.new(root: @dir, log: silent_log)
       assert(fresh.have?(subject, username: 'creator'))
-      assert_path_exists(File.join(@dir, 'creator', 'posts', '2026-01-14_111_333.mpd.drm'))
+      assert_path_exists(File.join(@dir, 'onlyfans', 'creator', 'posts', '2026-01-14_111_333.mpd.drm'))
     end
 
     def test_partials_do_not_count_as_present
@@ -62,7 +64,7 @@ module OFDL
       subject = item
       path = @library.path_for(subject, username: '../../etc')
 
-      assert_equal(File.join(@dir, '.._.._etc', 'posts', '2026-01-14_111_222.jpg'), path.to_s)
+      assert_equal(File.join(@dir, 'onlyfans', '.._.._etc', 'posts', '2026-01-14_111_222.jpg'), path.to_s)
     end
 
     def test_ensure_root_accepts_an_existing_writable_directory
@@ -116,27 +118,48 @@ module OFDL
     end
 
     # The count behind `on disk`; see Session#count_library. Every creator and
-    # every source when `only` is absent. A marker counts as a file and adds no
-    # bytes.
+    # every post type when `only` is absent. A marker counts as a file and adds
+    # no bytes.
     def test_tally_covers_the_whole_tree
       @library.prepare(item, username: 'creator').write('12345')
       @library.write_marker(item(media_id: 333, extension: 'mpd', protected: true), username: 'creator')
-      @library.prepare(item(media_id: 444).with(source: 'messages'), username: 'creator').write('67')
+      @library.prepare(item(media_id: 444).with(post_type: 'messages'), username: 'creator').write('67')
       @library.prepare(item(media_id: 555), username: 'another').write('89')
 
       assert_equal([4, 9], @library.tally)
     end
 
-    # The producer waits on these names, so they have to arrive in the order it
+    # The producer waits on these keys, so they have to arrive in the order it
     # sorts its targets by, and under the key it sorts them by; see
     # Session#in_walk_order and Library#walk_key.
     def test_tally_reports_each_creator_in_walk_key_order
       %w[Carol alice BOB].each { @library.prepare(item, username: it).write('1') }
 
       seen = []
-      @library.tally(on_creator: ->(name) { seen << name })
+      @library.tally(on_creator: ->(key) { seen << key })
 
-      assert_equal(%w[alice bob carol], seen)
+      assert_equal(%w[onlyfans/alice onlyfans/bob onlyfans/carol], seen)
+    end
+
+    # The source sorts before the creator, so one source's creators are walked
+    # through before the next source's begin.
+    def test_tally_orders_by_source_before_creator
+      @library.prepare(item(source: 'instagram'), username: 'zoe').write('1')
+      @library.prepare(item, username: 'alice').write('1')
+
+      seen = []
+      @library.tally(on_creator: ->(key) { seen << key })
+
+      assert_equal(%w[instagram/zoe onlyfans/alice], seen)
+    end
+
+    # The same username on two sources is two creators in two directories, so
+    # one's presence check never answers for the other.
+    def test_one_username_on_two_sources_is_two_creators
+      @library.prepare(item, username: 'alice').write('1')
+
+      assert(@library.have?(item, username: 'alice'))
+      refute(@library.have?(item(source: 'instagram'), username: 'alice'))
     end
 
     # Two directories share a walk key only on a case-sensitive filesystem
@@ -144,10 +167,10 @@ module OFDL
     # key is forced. The key arrives once, after every file under it is read.
     def test_tally_reports_a_shared_walk_key_once_both_directories_are_read
       %w[one two].each { @library.prepare(item, username: it).write('1') }
-      @library.define_singleton_method(:walk_key) { |_name| 'shared' }
+      @library.define_singleton_method(:walk_key) { |_source, _name| 'shared' }
 
       events = []
-      @library.tally(on_creator: ->(name) { events << name }) { |_files, _bytes| events << :file }
+      @library.tally(on_creator: ->(key) { events << key }) { |_files, _bytes| events << :file }
 
       assert_equal([:file, :file, 'shared'], events)
     end
@@ -156,16 +179,48 @@ module OFDL
       @library.prepare(item, username: 'Creator').write('12345')
       @library.prepare(item(media_id: 555), username: 'another').write('89')
 
-      assert_equal([1, 5], @library.tally(only: %w[creator]))
+      assert_equal([1, 5], @library.tally(only: only(%w[onlyfans creator])))
+    end
+
+    # The name alone does not scope the walk: the same name on another source is
+    # a different creator.
+    def test_a_scoped_tally_ignores_the_same_name_on_another_source
+      @library.prepare(item(source: 'instagram'), username: 'alice').write('12345')
+
+      assert_equal([0, 0], @library.tally(only: only(%w[onlyfans alice])))
     end
 
     def test_a_scoped_tally_reports_only_the_creators_it_counted
       %w[Carol alice BOB].each { @library.prepare(item, username: it).write('1') }
 
       seen = []
-      @library.tally(only: %w[CAROL alice], on_creator: ->(name) { seen << name })
+      @library.tally(only: only(%w[onlyfans CAROL], %w[onlyfans alice]), on_creator: ->(key) { seen << key })
 
-      assert_equal(%w[alice carol], seen)
+      assert_equal(%w[onlyfans/alice onlyfans/carol], seen)
+    end
+
+    # One media item can produce two files -- a reel is a video and its
+    # thumbnail -- and they need different keys or the second is taken for a
+    # duplicate of the first; see Session#verdict_for.
+    def test_a_role_suffix_makes_a_second_file_from_one_media_id
+      video = item(media_id: 900, extension: 'mp4')
+      thumb = item(media_id: '900_thumb', extension: 'jpg')
+
+      @library.prepare(video, username: 'creator').write('12345')
+
+      refute_equal(video.key, thumb.key)
+      assert(@library.have?(video, username: 'creator'))
+      refute(@library.have?(thumb, username: 'creator'))
+    end
+
+    def test_a_role_suffixed_file_is_read_back_as_present
+      thumb = item(media_id: '900_thumb', extension: 'jpg')
+      @library.prepare(thumb, username: 'creator').write('12345')
+
+      fresh = Library.new(root: @dir, log: silent_log)
+
+      assert(fresh.have?(thumb, username: 'creator'))
+      assert_path_exists(File.join(@dir, 'onlyfans', 'creator', 'posts', '2026-01-14_111_900_thumb.jpg'))
     end
 
     def test_tally_of_an_empty_library_is_zero
@@ -190,7 +245,7 @@ module OFDL
     def test_tally_leaves_the_presence_cache_warm
       @library.prepare(item, username: 'creator').write('12345')
       @library.tally
-      FileUtils.remove_entry(File.join(@dir, 'creator'))
+      FileUtils.remove_entry(File.join(@dir, 'onlyfans', 'creator'))
 
       assert(@library.have?(item, username: 'creator'))
     end

@@ -3,7 +3,7 @@
 require_relative 'test_helper'
 
 module OFDL
-  class RulesSourceTest < TestCase
+  class RulesStoreTest < TestCase
     # The `rules_url` of every config here: nothing listens on port 1, so a test
     # that reaches the network raises RulesError instead of passing.
     UNREACHABLE = 'http://127.0.0.1:1/rules.json'
@@ -23,10 +23,10 @@ module OFDL
       Config.new(path)
     end
 
-    def source_for(config) = RulesSource.new(config:, log: silent_log)
+    def store_for(config) = RulesStore.new(config:, log: silent_log)
 
     def test_uses_rules_cached_in_the_config
-      rules = source_for(config_with({ 'rules' => payload })).load
+      rules = store_for(config_with({ 'rules' => payload })).load
 
       assert_equal('S', rules.static_param)
       assert_equal(7, rules.checksum_constant)
@@ -35,7 +35,7 @@ module OFDL
     def test_ignores_a_malformed_cache_rather_than_signing_with_it
       config = config_with({ 'rules' => payload.merge('checksum_indexes' => 'nope') })
 
-      assert_raises(RulesError) { source_for(config).load }
+      assert_raises(RulesError) { store_for(config).load }
     end
 
     def test_a_pinned_file_beats_the_cache
@@ -43,7 +43,7 @@ module OFDL
       pinned.write(JSON.generate(payload.merge('static_param' => 'PINNED')))
       config = config_with({ 'rules' => payload, 'rules_file' => pinned.to_s })
 
-      assert_equal('PINNED', source_for(config).load.static_param)
+      assert_equal('PINNED', store_for(config).load.static_param)
     end
 
     def test_refresh_leaves_a_pinned_file_alone
@@ -51,7 +51,7 @@ module OFDL
       pinned.write(JSON.generate(payload.merge('static_param' => 'PINNED')))
       config = config_with({ 'rules_file' => pinned.to_s })
 
-      assert_equal('PINNED', source_for(config).refresh!.static_param)
+      assert_equal('PINNED', store_for(config).refresh!.static_param)
     end
 
     def test_storing_rules_preserves_the_rest_of_the_config
@@ -70,7 +70,7 @@ module OFDL
       config = config_with({})
       config.store_rules!(payload)
 
-      assert_equal('S', source_for(Config.new(config.path)).load.static_param)
+      assert_equal('S', store_for(Config.new(config.path)).load.static_param)
     end
   end
 end

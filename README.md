@@ -105,18 +105,24 @@ not come back. Cancel it and the run stops with
 ofdl status                                # setup, output_dir, and session check
 ofdl status --library-stats                # also count the files in output_dir
 ofdl subs                                  # who you are subscribed to
-ofdl fetch                                 # every subscription, configured sources
+ofdl fetch                                 # every subscription, configured post types
 ofdl fetch someone                         # one creator
 ofdl fetch someone other                   # several creators
 ofdl fetch someone --since 2026-01-01      # only recent posts
-ofdl fetch --sources posts,messages        # everything, narrowed
+ofdl fetch --post-types posts,messages     # everything, narrowed
 ofdl fetch someone --include-ads           # keep the posts advertising others
+ofdl fetch onlyfans/someone                # name the app the creator is on
+ofdl fetch --source of                     # every creator on one app
+ofdl subs --source of                      # the same filter, on subs
 ofdl --help                                # every command and option
 ```
 
-A name may be given with or without a leading `@`, and case is ignored; it is
-matched against `ofdl subs`, and an unknown name is an error rather than a
-silent skip.
+A name may carry the app the creator is on — `onlyfans/someone`, or `of/someone`
+— and without one means `onlyfans`. `ofdl subs` prints names in that form, so a
+line can be copied straight onto a `fetch`.
+
+A name may also carry a leading `@`, and case is ignored; it is matched against
+`ofdl subs`, and an unknown name is an error rather than a silent skip.
 
 Ctrl-C stops immediately. The stats panel is printed once more, the scratch
 directory is removed, and nothing partially downloaded is kept. Rerun and
@@ -125,16 +131,22 @@ nothing is downloaded twice: the listing starts again, and every item already in
 
 ## Where the files go
 
-Under `output_dir`, a directory per creator and one per source inside it:
+Under `output_dir`, a directory per app, a directory per creator inside that,
+and one per post type inside that:
 
 ```text
-/tmp/onlyfans/someone/posts/2026-01-14_111_222.jpg
-              │       │     │          │   └ media id
-              │       │     │          └ post id
-              │       │     └ the date it was posted
-              │       └ posts, messages, stories, highlights, paid, archived
-              └ the creator's username
+/tmp/media/onlyfans/someone/posts/2026-01-14_111_222.jpg
+           │        │       │     │          │   └ media id
+           │        │       │     │          └ post id
+           │        │       │     └ the date it was posted
+           │        │       └ posts, messages, stories, highlights, paid, archived
+           │        └ the creator's username
+           └ the app the creator is on
 ```
+
+The app leads because one name can belong to two people: `onlyfans/alice` and
+`instagram/alice` are separate creators in separate directories, and neither
+run's check for what is already downloaded answers for the other.
 
 The date and the two ids are the whole name: no title, no caption, and the same
 item always lands at the same path. Those ids are also how a rerun recognises
@@ -157,7 +169,7 @@ Point it at your library and the config is complete:
 
 ```json
 {
-  "output_dir": "/tmp/onlyfans"
+  "output_dir": "/tmp/media"
 }
 ```
 
@@ -168,9 +180,9 @@ set what you actually want to control, and leave the rest out:
 
 ```json
 {
-  "output_dir": "/tmp/onlyfans",
+  "output_dir": "/tmp/media",
   "concurrency": 2,
-  "sources": ["posts", "messages"],
+  "post_types": ["posts", "messages"],
   "images": false
 }
 ```
@@ -187,7 +199,7 @@ If the file is unreadable, or isn't a JSON object, ofdl says so and stops.
 | `rules_url`           | `https://r2.hlsdownloader.com/win32/dynamicRules.json` | where to refetch signing parameters                    |
 | `rules_file`          | unset                                                  | pinned local rules; disables `rules_url`               |
 | `rules`               | written automatically                                  | cached signing parameters                              |
-| `sources`             | all six                                                | `posts, messages, stories, highlights, paid, archived` |
+| `post_types`          | all six                                                | `posts, messages, stories, highlights, paid, archived` |
 | `skip_protected`      | `true`                                                 | skip Widevine video                                    |
 | `mark_protected`      | `true`                                                 | leave `.drm` markers                                   |
 | `skip_ads`            | `true`                                                 | skip posts advertising another creator                 |
@@ -220,9 +232,9 @@ Three columns, each read downward.
 
 - `creators` — creators finished scanning, over the total, then the one being
   listed.
-- `scanning` — the step running: `subscriptions`, then the source being listed.
-  Reads `waiting for listing` while listing is held up by the count of
-  `output_dir`, and `done` when there's nothing left to list.
+- `scanning` — the step running: `subscriptions`, then the post type being
+  listed. The field reads `waiting for listing` while listing is held up by the
+  count of `output_dir`, and `done` when there's nothing left to list.
 - `requests` — API calls made.
 - `discovered` — media found, as images / videos.
 

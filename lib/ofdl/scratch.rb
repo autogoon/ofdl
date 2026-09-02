@@ -31,9 +31,9 @@ module OFDL
     # copy, and an interrupted copy leaves a short file under the final name that
     # the next run takes for a completed download. Renaming within the
     # destination is atomic, so a file that exists is always whole.
-    def publish(source, destination)
+    def publish(working, destination)
       staged = Pathname("#{destination}.part")
-      FileUtils.cp(source, staged)
+      FileUtils.cp(working, staged)
       staged.rename(destination)
       destination.size
     end

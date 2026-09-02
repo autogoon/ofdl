@@ -5,17 +5,25 @@ require 'openssl'
 require 'tmpdir'
 
 module OFDL
-  # Reads OnlyFans cookies from the local Chrome profile.
+  # Reads one site's cookies from the local Chrome profile.
   #
   # Chrome keeps cookies in a SQLite file with each value encrypted under a key
   # stored in the login Keychain. We copy the file (Chrome holds a write lock on
   # the original), read it with the system `sqlite3` binary, and decrypt
-  # in-process. No cookie is written anywhere; the values are sent only to
-  # onlyfans.com.
+  # in-process. No cookie is written anywhere, and a jar is sent only to the
+  # host it was read for.
   module Cookies
-    # The sets OnlyFans itself relies on. `auth_id` identifies the account and
-    # `fp` doubles as the `x-bc` request header (see Signer#headers_for).
-    REQUIRED = %w[csrf fp sess auth_id st ref_src].freeze
+    # Which cookies one site needs, and in what order.
+    #
+    # `host` is the domain the cookies are read for and sent to. `lead` is the
+    # cookies that domain's browser client sends first; putting them at the
+    # front of the header keeps the header identical from run to run.
+    # `required` is the smaller set a run cannot start without: Cookies.load
+    # checks for them and raises naming the absent ones, so a missing sign-in
+    # is reported before the first request rather than as its failure.
+    #
+    # Sources::OnlyFans::COOKIES gives onlyfans.com's host, lead and required.
+    Site = Data.define(:host, :lead, :required)
 
     KEYCHAIN_SERVICE = 'Chrome Safe Storage'
     KEYCHAIN_ACCOUNT = 'Chrome'
@@ -29,23 +37,19 @@ module OFDL
     KEY_LENGTH = 16
     IV = (' ' * 16).freeze
 
-    Jar = Data.define(:values) do
-      def auth_id = values.fetch('auth_id', '')
-
-      def xbc = values.fetch('fp', '')
+    Jar = Data.define(:values, :site) do
+      def [](name) = values.fetch(name, '')
 
       # Chrome sends the whole jar, and that includes Cloudflare's
       # bot-management sets (`cf_clearance`, `__cf_bm`) -- omitting those makes
       # the request look like a bot to the edge, which never reaches the
       # application at all.
       #
-      # The required sets lead so the header is stable run to run.
-      #
       # One bad byte invalidates the entire Cookie header, and the request is
       # then refused as malformed with no body -- so a decryption edge case
       # must cost one cookie, never the whole run.
       def header
-        ordered = REQUIRED + (values.keys - REQUIRED).sort
+        ordered = site.lead + (values.keys - site.lead).sort
         ordered.filter_map { |n| "#{n}=#{values[n]}" if present?(n) && header_safe?(values[n]) }.join('; ')
       end
 
@@ -53,20 +57,20 @@ module OFDL
 
       def header_safe?(value) = value.to_s.dup.force_encoding(Encoding::BINARY).match?(/\A[\x20-\x7e]*\z/n)
 
-      def complete? = !auth_id.empty? && !xbc.empty? && present?('sess')
+      def complete? = missing.empty?
 
-      def missing = REQUIRED.reject { present?(it) }
+      def missing = site.required.reject { present?(it) }
 
       def present?(name) = !values[name].to_s.empty?
     end
 
     class << self
-      def load(profile: 'Default')
-        jar = Jar.new(values: read_values(profile:))
+      def load(site:, profile: 'Default')
+        jar = Jar.new(values: read_values(profile:, host: site.host), site:)
         unless jar.complete?
           raise CookieError, <<~MSG.strip
-            incomplete OnlyFans cookies in Chrome profile #{profile.inspect} (missing: #{jar.missing.join(', ')})
-            Sign in at https://onlyfans.com in that profile, then retry.
+            incomplete #{site.host} cookies in Chrome profile #{profile.inspect} (missing: #{jar.missing.join(', ')})
+            Sign in at https://#{site.host} in that profile, then retry.
           MSG
         end
 
@@ -77,7 +81,7 @@ module OFDL
 
       private
 
-      def read_values(profile:)
+      def read_values(profile:, host:)
         dir = profile_dir(profile:)
         jar_path = [dir.join('Network', 'Cookies'), dir.join('Cookies')].find(&:file?)
         raise CookieError, "no cookie store under #{dir}" unless jar_path
@@ -87,7 +91,7 @@ module OFDL
         Dir.mktmpdir('ofdl-cookies') do |tmp|
           copy = Pathname(tmp).join('Cookies')
           FileUtils.cp(jar_path, copy)
-          rows(copy).to_h do |name, plain_hex, cipher_hex|
+          rows(copy, host).to_h do |name, plain_hex, cipher_hex|
             [name, cipher_hex.empty? ? unhex(plain_hex) : decrypt(unhex(cipher_hex), key)]
           end
         end
@@ -95,9 +99,9 @@ module OFDL
 
       # Everything is selected as hex so the `|` separator can never appear
       # inside a field.
-      def rows(path)
+      def rows(path, host)
         sql = 'SELECT name, hex(value), hex(encrypted_value) FROM cookies ' \
-              "WHERE host_key LIKE '%onlyfans.com';"
+              "WHERE host_key LIKE '%#{host}';"
         out = run(sqlite_binary, path.to_s, sql, error: "could not read #{path}")
         out.each_line.filter_map do |line|
           name, plain_hex, cipher_hex = line.chomp.split('|', 3)

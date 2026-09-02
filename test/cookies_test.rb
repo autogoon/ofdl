@@ -16,6 +16,10 @@ module OFDL
 
     def decrypt(blob) = Cookies.send(:decrypt, blob, KEY)
 
+    SITE = Sources::OnlyFans::COOKIES
+
+    def jar_of(values) = Cookies::Jar.new(values:, site: SITE)
+
     def test_round_trips_a_cookie_value
       assert_equal('abc123', decrypt(encrypt('abc123')))
     end
@@ -55,36 +59,32 @@ module OFDL
     end
 
     def test_jar_builds_the_header_in_a_stable_order
-      jar = Cookies::Jar.new(values: { 'sess' => 's', 'auth_id' => '1', 'fp' => 'f', 'csrf' => 'c' })
+      jar = jar_of({ 'sess' => 's', 'auth_id' => '1', 'fp' => 'f', 'csrf' => 'c' })
 
       assert_equal('csrf=c; fp=f; sess=s; auth_id=1', jar.header)
-      assert_equal('1', jar.auth_id)
-      assert_equal('f', jar.xbc)
+      assert_equal('1', jar['auth_id'])
       assert_predicate(jar, :complete?)
     end
 
     # see Cookies::Jar#header
     def test_jar_includes_every_cookie_after_the_required_ones
-      jar = Cookies::Jar.new(values: {
-                               'sess' => 's', 'auth_id' => '1', 'fp' => 'f', 'csrf' => 'c',
-                               'cf_clearance' => 'cf', '__cf_bm' => 'bm', 'lang' => 'en'
-                             })
+      jar = jar_of({
+                     'sess' => 's', 'auth_id' => '1', 'fp' => 'f', 'csrf' => 'c',
+                     'cf_clearance' => 'cf', '__cf_bm' => 'bm', 'lang' => 'en'
+                   })
 
       assert_equal('csrf=c; fp=f; sess=s; auth_id=1; __cf_bm=bm; cf_clearance=cf; lang=en', jar.header)
     end
 
     def test_jar_skips_empty_values
-      jar = Cookies::Jar.new(values: { 'sess' => 's', 'auth_id' => '1', 'fp' => 'f', 'st' => '' })
+      jar = jar_of({ 'sess' => 's', 'auth_id' => '1', 'fp' => 'f', 'st' => '' })
 
       refute_includes(jar.header, 'st=')
     end
 
     # see Cookies::Jar#header
     def test_jar_drops_values_that_are_not_header_safe
-      jar = Cookies::Jar.new(values: {
-                               'sess' => 's', 'auth_id' => '1', 'fp' => 'f',
-                               'ref_src' => 255.chr * 8
-                             })
+      jar = jar_of({ 'sess' => 's', 'auth_id' => '1', 'fp' => 'f', 'ref_src' => 255.chr * 8 })
 
       assert_predicate(jar.header, :ascii_only?)
       refute_includes(jar.header, 'ref_src')
@@ -92,13 +92,13 @@ module OFDL
     end
 
     def test_a_clean_jar_reports_nothing_unsafe
-      jar = Cookies::Jar.new(values: { 'sess' => 's', 'auth_id' => '1', 'fp' => 'f' })
+      jar = jar_of({ 'sess' => 's', 'auth_id' => '1', 'fp' => 'f' })
 
       assert_empty(jar.unsafe)
     end
 
     def test_jar_reports_what_is_missing
-      jar = Cookies::Jar.new(values: { 'sess' => 's' })
+      jar = jar_of({ 'sess' => 's' })
 
       refute_predicate(jar, :complete?)
       assert_includes(jar.missing, 'auth_id')

@@ -5,7 +5,7 @@ module OFDL
   # Enumerator of raw rows, so a caller can stop early without fetching the
   # rest of a timeline.
   #
-  # Each source carries its own cursor:
+  # Each post type carries its own cursor:
   #   posts    -> `beforePublishTime` from the response's `tailMarker`
   #   messages -> `id` of the last row returned
   #   paid     -> numeric `offset`

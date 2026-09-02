@@ -37,7 +37,7 @@ module OFDL
     def test_the_first_column_follows_the_crawl
       @stats.bump(:creators_total, 12).bump(:creators_done, 3).bump(:requests, 87)
       @stats.bump(:images, 1200).bump(:videos, 216)
-      @stats.scanning(creator: 'someone', source: 'posts')
+      @stats.scanning(creator: 'someone', step: 'posts')
 
       assert_match(%r{3/12 someone}, header[1])
       assert_match(/scanning\s+posts/, header[2])
@@ -48,7 +48,7 @@ module OFDL
     # See Stats#done_scanning: the count stays, the name goes.
     def test_the_creators_field_drops_the_name_once_scanning_is_done
       @stats.bump(:creators_total, 12).bump(:creators_done, 12)
-      @stats.scanning(creator: 'someone', source: 'posts')
+      @stats.scanning(creator: 'someone', step: 'posts')
 
       @stats.done_scanning
 
@@ -102,11 +102,10 @@ module OFDL
       assert_match(/big\.mp4/, slots.first)
     end
 
-    # The pool interleaves creators, so the row names its own, and the source
-    # is the directory the file lands in; see Dashboard#target.
-    def test_a_slot_names_the_creator_and_source_it_is_fetching_for
+    # The row's shape, and why it names a creator, are at Dashboard#target.
+    def test_a_slot_names_the_creator_and_post_type_it_is_fetching_for
       @stats.begin_download(0, filename: 'a.jpg', path: partial('a.part', 10), total: 100, creator: 'alice',
-                               source: 'posts')
+                               post_type: 'posts')
 
       assert_match(%r{alice/posts/a\.jpg}, slots.first)
     end

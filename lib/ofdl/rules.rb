@@ -44,7 +44,7 @@ module OFDL
 
   # Supplies Rules, cached in the config file. There is no expiry: a signature
   # OnlyFans rejects is what triggers a refetch.
-  class RulesSource
+  class RulesStore
     def initialize(config:, log:)
       @config = config
       @log = log

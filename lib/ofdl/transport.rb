@@ -102,13 +102,16 @@ module OFDL
         @chrome_targets ||= wrapper_majors.select { supports?("chrome#{it}") }.sort
       end
 
-      def get(url, headers)
-        Tempfile.create('ofdl-body') do |body|
-          out, err, status = run(command(url, headers, body.path, MAX_TIME))
-          raise ApiError, "#{@binary} failed (#{status.exitstatus}): #{err.strip}" unless status.success?
+      def get(url, headers) = perform(command(url, headers, MAX_TIME))
 
-          code, content_type = out.strip.split(' ', 2)
-          Response.new(status: code.to_i, content_type:, body: File.read(body.path))
+      # `form` is a urlencoded body, given to curl through a file: a doc_id
+      # query's variables run to hundreds of bytes, and an argument list has a
+      # length limit where a file has none.
+      def post(url, headers, form)
+        Tempfile.create('ofdl-form') do |file|
+          file.write(form)
+          file.flush
+          perform(command(url, headers, MAX_TIME) + ['--data-binary', "@#{file.path}"])
         end
       end
 
@@ -119,7 +122,7 @@ module OFDL
       # arrive -- before the body, which is what makes its Content-Length usable
       # as a live progress total; see Item#size.
       def download(url, destination, headers: {}, dump_headers: nil)
-        argv = command(url, headers, destination.to_s, DOWNLOAD_MAX_TIME)
+        argv = command(url, headers, DOWNLOAD_MAX_TIME) + ['--output', destination.to_s]
         argv += ['--dump-header', dump_headers.to_s] if dump_headers
         out, err, status = run(argv)
         raise DownloadError, "#{@binary} failed (#{status.exitstatus}): #{err.strip}" unless status.success?
@@ -128,6 +131,18 @@ module OFDL
       end
 
       private
+
+      # The body goes to a temporary file rather than to stdout, which carries
+      # the status line `--write-out` prints.
+      def perform(argv)
+        Tempfile.create('ofdl-body') do |body|
+          out, err, status = run(argv + ['--output', body.path])
+          raise ApiError, "#{@binary} failed (#{status.exitstatus}): #{err.strip}" unless status.success?
+
+          code, content_type = out.strip.split(' ', 2)
+          Response.new(status: code.to_i, content_type:, body: File.read(body.path))
+        end
+      end
 
       def run(argv)
         Open3.capture3(*argv)
@@ -155,7 +170,7 @@ module OFDL
 
       # No shell: argv goes straight to exec, so a header value cannot be
       # interpreted as anything but a header value.
-      def command(url, headers, output_path, max_time)
+      def command(url, headers, max_time)
         [
           @binary,
           '--compressed',
@@ -163,7 +178,6 @@ module OFDL
           '--silent', '--show-error',
           '--connect-timeout', CONNECT_TIMEOUT.to_s,
           '--max-time', max_time.to_s,
-          '--output', output_path,
           '--write-out', '%{http_code} %{content_type}',
           *headers.flat_map { |key, value| ['--header', "#{key}: #{value}"] },
           url

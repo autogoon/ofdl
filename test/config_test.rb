@@ -48,10 +48,37 @@ module OFDL
       refute(Pathname(Config::OUTPUT_DIR_PLACEHOLDER).exist?)
     end
 
-    def test_rejects_unknown_sources
-      error = assert_raises(ConfigError) { Config.new(write({ 'sources' => %w[posts nonsense] })) }
+    def test_rejects_unknown_post_types
+      error = assert_raises(ConfigError) { Config.new(write({ 'post_types' => %w[posts nonsense] })) }
 
-      assert_match(/unknown sources: nonsense/, error.message)
+      assert_match(/unknown post types: nonsense/, error.message)
+    end
+
+    def test_a_list_of_post_types_applies_to_every_app
+      config = Config.new(write({ 'post_types' => %w[posts messages] }))
+
+      assert_equal(%w[posts messages], config.post_types('onlyfans'))
+      assert_equal(%w[posts messages], config.post_types('instagram'))
+    end
+
+    def test_post_types_can_be_given_per_app
+      config = Config.new(write({ 'post_types' => { 'onlyfans' => %w[messages] } }))
+
+      assert_equal(%w[messages], config.post_types('onlyfans'))
+    end
+
+    def test_an_app_missing_from_the_map_follows_the_default
+      config = Config.new(write({ 'post_types' => { 'onlyfans' => %w[messages] } }))
+
+      assert_equal(Config::POST_TYPES, config.post_types('instagram'))
+    end
+
+    def test_rejects_unknown_post_types_inside_the_map
+      error = assert_raises(ConfigError) do
+        Config.new(write({ 'post_types' => { 'onlyfans' => %w[posts nonsense] } }))
+      end
+
+      assert_match(/unknown post types: nonsense/, error.message)
     end
 
     def test_rejects_nonsense_concurrency

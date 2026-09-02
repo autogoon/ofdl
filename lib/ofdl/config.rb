@@ -6,7 +6,12 @@ module OFDL
   # There is no database and no hidden state directory: this JSON file and the
   # output tree hold all persistent state.
   class Config
-    SOURCES = %w[posts messages stories highlights paid archived].freeze
+    # Every post type any app has, which is what a configured value is checked
+    # against. Which of them one app actually has is that app's own list --
+    # Sources::OnlyFans::POST_TYPES -- and a run walks the two intersected, so
+    # naming a feed only one app carries selects it there and is absent
+    # elsewhere rather than failing.
+    POST_TYPES = %w[posts messages stories highlights paid archived reels avatar].freeze
 
     # output_dir is not here. It is the one key with no defensible default: an
     # invented root would be silently created on the boot disk the first time a
@@ -17,7 +22,7 @@ module OFDL
       'concurrency' => 4,
       'requests_per_second' => 2.0,
       'rules_url' => 'https://r2.hlsdownloader.com/win32/dynamicRules.json',
-      'sources' => SOURCES,
+      'post_types' => POST_TYPES,
       'skip_protected' => true,
       'mark_protected' => true,
       'skip_ads' => true,
@@ -75,7 +80,7 @@ module OFDL
 
     def rules_file = @data['rules_file']&.then { Pathname(it).expand_path }
 
-    # Refetched only when OnlyFans rejects a signature; see RulesSource.
+    # Refetched only when OnlyFans rejects a signature; see RulesStore.
     def cached_rules = @data['rules']
 
     def store_rules!(payload)
@@ -92,7 +97,21 @@ module OFDL
       false
     end
 
-    def sources = Array(@data.fetch('sources')).map(&:to_s)
+    # A list applies to every app; a map gives one app its own. An app absent
+    # from a map follows the default rather than being archived with no feeds.
+    def post_types(source = nil)
+      configured = @data.fetch('post_types')
+      return Array(configured).map(&:to_s) unless configured.is_a?(Hash)
+
+      list = source && configured[source.to_s]
+      list ? Array(list).map(&:to_s) : POST_TYPES
+    end
+
+    # Every list in the config, whichever shape it was given in.
+    def configured_post_types
+      configured = @data.fetch('post_types')
+      configured.is_a?(Hash) ? configured.values.flatten.map(&:to_s) : Array(configured).map(&:to_s)
+    end
 
     def skip_protected? = @data.fetch('skip_protected') != false
 
@@ -133,8 +152,8 @@ module OFDL
     end
 
     def validate!
-      unknown = sources - SOURCES
-      raise ConfigError, "unknown sources: #{unknown.join(', ')} (known: #{SOURCES.join(', ')})" if unknown.any?
+      unknown = configured_post_types - POST_TYPES
+      raise ConfigError, "unknown post types: #{unknown.join(', ')} (known: #{POST_TYPES.join(', ')})" if unknown.any?
       raise ConfigError, 'concurrency must be >= 1' if concurrency < 1
       raise ConfigError, 'requests_per_second must be > 0' unless requests_per_second.positive?
       raise ConfigError, 'refresh must be > 0' unless refresh.positive?

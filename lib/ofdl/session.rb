@@ -29,13 +29,18 @@ module OFDL
 
   # Wires the pieces together and owns the run.
   #
+  # Session holds what every app shares: the transport, the library, the
+  # scratch directory, the download pool, the counters. A source adapter holds
+  # what one app does on its own: its session, its request signing, which feeds
+  # it has. There is one adapter per app; see Sources::OnlyFans.
+  #
   # Built lazily so `ofdl status` can report the environment and the library
-  # before `jar` brings up the Keychain prompt, and so an auth failure surfaces
-  # before any enumeration starts.
+  # before an adapter brings up the Keychain prompt, and so an auth failure
+  # surfaces before any enumeration starts.
   class Session
     attr_reader :config, :log, :stats
 
-    # Creators and sources whose newest post older than `--since` is not on
+    # Creators and post types whose newest post older than `--since` is not on
     # disk; see #note_gap.
     attr_reader :gaps
 
@@ -50,39 +55,22 @@ module OFDL
     # The dashboard, once it exists; workers draw their own previews through it.
     attr_writer :preview
 
-    def jar = @jar ||= Cookies.load(profile: @config.chrome_profile)
-
-    def rules_source = @rules_source ||= RulesSource.new(config: @config, log: @log)
-
-    def rules = @rules ||= rules_source.load
-
-    def signer = @signer ||= build_signer(rules)
-
     def transport
       @transport ||= Transport::CurlImpersonate.newest_chrome(binary: @config.curl_impersonate, log: @log)
     end
 
-    # Handed to the Client so a rejected signature can be retried with freshly
-    # fetched rules exactly once.
-    def refresh_signer!
-      @rules = rules_source.refresh!
-      @signer = build_signer(@rules)
+    # One adapter per app, built on first use. Source::ALL lists only apps that
+    # have an adapter, and every route to here resolves through it, so an
+    # unknown key is a bug rather than a configuration mistake.
+    def adapter_for(key)
+      @adapters ||= {}
+      @adapters[key] ||=
+        case key
+        when Source::ONLYFANS then Sources::OnlyFans.new(config: @config, log: @log, stats: @stats, transport:)
+        when Source::INSTAGRAM then Sources::Instagram.new(config: @config, log: @log, stats: @stats, transport:)
+        else raise Error, "no adapter for source #{key.inspect}"
+        end
     end
-
-    def site_state
-      @site_state ||= SiteState.new(transport:, auth_id: jar.auth_id, log: @log)
-    end
-
-    def client
-      @client ||= Client.new(
-        jar:, signer:, transport:, site_state:, stats: @stats,
-        rate_limiter: RateLimiter.new(@config.requests_per_second),
-        log: @log,
-        refresh_signer: -> { refresh_signer! }
-      )
-    end
-
-    def api = @api ||= Api.new(client:)
 
     def library = @library ||= Library.new(root: @config.output_dir, log: @log)
 
@@ -145,9 +133,9 @@ module OFDL
     # order is what makes wait_for_count almost always free: the walk is ahead
     # of the listing from the first creator, and stays ahead. Public because
     # the CLI announces the run in this order before archive starts.
-    def in_walk_order(targets) = targets.sort_by { library.walk_key(it[:username]) }
+    def in_walk_order(targets) = targets.sort_by { library.walk_key(it[:source], it[:username]) }
 
-    def archive(targets:, sources: @config.sources, since: nil, skip_ads: @config.skip_ads?)
+    def archive(targets:, post_types: nil, since: nil, skip_ads: @config.skip_ads?)
       queue = SizedQueue.new(QUEUE_DEPTH)
       summary = Summary.empty
       tally = { done: 0, bytes: 0 }
@@ -172,57 +160,89 @@ module OFDL
         end
       end
 
-      produce(queue, targets:, sources:, since:, skip_ads:)
+      produce(queue, targets:, post_types:, since:, skip_ads:)
       @stats.done_scanning
       consumers.each(&:join)
       @log.clear_progress
       summary
     end
 
-    # Yields each item the moment it is found. Deduplicated across sources: the
-    # same media often appears in both a timeline and the paid feed.
-    def stream(user_id:, sources:, since: nil, username: nil, seen: Set.new, skip_ads: @config.skip_ads?)
-      sources.each do |source|
-        @log.step("#{"#{username} " if username}#{source}")
-        @stats.scanning(creator: username, source:)
-        counts = Hash.new(0)
+    # Yields each item the moment it is found. Deduplicated across post types:
+    # the same media often appears in both a timeline and the paid feed.
+    # The feeds asked for, or the configured set when none were, narrowed to
+    # the ones this app has; see Config::POST_TYPES.
+    def stream(user_id:, post_types: nil, source: Source::ONLYFANS, since: nil, username: nil, seen: Set.new,
+               skip_ads: @config.skip_ads?)
+      adapter = adapter_for(source)
+      wanted = (post_types || @config.post_types(source)) & adapter.post_types
+      counts = Hash.new { |types, type| types[type] = Hash.new(0) }
+      listing = nil
 
-        each_row(source, user_id, since:) do |row|
-          counts[:rows] += 1
-          # Read once per row rather than once per item, and only when the
-          # answer would be acted on.
-          advert = skip_ads && Advert.reason(row, creator: username)
-
-          Media.from_row(row, source:).each do |item|
-            counts[:media] += 1
-            count_discovery(item)
-
-            verdict = verdict_for(item, username:, since:, seen:, advert:)
-            counts[verdict] += 1
-            case verdict
-            when :old then note_gap(item, username:, source:, since:) if counts[:old] == 1
-            when :advert then @log.debug("#{source}/#{item.post_id}: advertises #{advert}, skipped")
-            when :queued then yield item
-            end
-          end
-        end
-
-        @log.info("  #{counts[:rows]} rows, #{counts[:media]} media, " \
-                  "#{counts[:queued]} queued#{tail_note(counts)}")
+      adapter.each_row(wanted, user_id, since:, present: presence(source, username)) do |post_type, row|
+        listing = announce(post_type, username:, first: counts[post_type][:rows].zero?) if post_type != listing
+        take_row(row, post_type:, adapter:, counts: counts[post_type], username:, since:, seen:, skip_ads:) { yield it }
       end
+
+      counts.each { |post_type, tally| log_listing(post_type, tally) }
     end
 
     private
 
     # Backpressure, not capacity. The producer is paced only by
     # requests_per_second and yields a page of items at a time, so an unbounded
-    # queue would let it run to the end of every source while the pool trickles:
-    # memory would scale with the library rather than with concurrency, and
-    # `queued` would read as the whole timeline instead of what is waiting.
+    # queue would let it run to the end of every post type while the pool was
+    # still draining the first pages: memory would scale with the library rather
+    # than with concurrency, and `queued` would read as the whole timeline
+    # instead of what is waiting.
     QUEUE_DEPTH = 256
     private_constant :QUEUE_DEPTH
 
-    def build_signer(rules) = Signer.new(rules:, user_id: jar.auth_id, xbc: jar.xbc)
+    # Answers whether a key is already on disk, for a source that must make a
+    # further request to learn an item's URL: asking first keeps the request to
+    # what is missing. Without a username there is no library to consult, which
+    # is how tests drain the stream, and every key answers false.
+    def presence(source, username)
+      return ->(_post_type, _key) { false } unless username
+
+      ->(post_type, key) { library.key?(key, source:, username:, post_type:) }
+    end
+
+    # One listing can carry two post types -- an Instagram timeline holds reels
+    # beside plain posts -- so the panel's step is set from each row rather
+    # than once per feed. The log line is written the first time a post type
+    # appears, not every time the rows switch back to it.
+    #
+    # Returns the post type, which the caller compares against the next row's.
+    def announce(post_type, username:, first:)
+      @log.step("#{"#{username} " if username}#{post_type}") if first
+      @stats.scanning(creator: username, step: post_type)
+      post_type
+    end
+
+    def log_listing(post_type, tally)
+      @log.info("  #{post_type}: #{tally[:rows]} rows, #{tally[:media]} media, " \
+                "#{tally[:queued]} queued#{tail_note(tally)}")
+    end
+
+    def take_row(row, post_type:, adapter:, counts:, username:, since:, seen:, skip_ads:)
+      counts[:rows] += 1
+      # Read once per row rather than once per item, and only when the answer
+      # would be acted on.
+      advert = skip_ads && adapter.advert_reason(row, creator: username)
+
+      adapter.items_from(row, post_type:).each do |item|
+        counts[:media] += 1
+        count_discovery(item)
+
+        verdict = verdict_for(item, username:, since:, seen:, advert:)
+        counts[verdict] += 1
+        case verdict
+        when :old then note_gap(item, username:, since:) if counts[:old] == 1
+        when :advert then @log.debug("#{post_type}/#{item.post_id}: advertises #{advert}, skipped")
+        when :queued then yield item
+        end
+      end
+    end
 
     # What becomes of one item, and the one place the order of the tests is
     # written down: the counters and the panel both follow from the answer.
@@ -252,12 +272,13 @@ module OFDL
     # later run reaches them.
     #
     # Only this row is checked. A gap older than it goes unreported.
-    def note_gap(item, username:, source:, since:)
+    def note_gap(item, username:, since:)
       return unless username
       return if present?(item, username)
 
-      @gaps << "#{username}/#{source}"
-      @log.warn("  #{username}/#{source}: posts before #{since.strftime('%Y-%m-%d')} " \
+      gap = "#{item.source}/#{username}/#{item.post_type}"
+      @gaps << gap
+      @log.warn("  #{gap}: posts before #{since.strftime('%Y-%m-%d')} " \
                 'are not on disk -- rerun with an earlier --since')
     end
 
@@ -284,18 +305,19 @@ module OFDL
     end
 
     # Closing the queue is what tells the consumers to finish, so it has to
-    # happen even when a source raises mid-walk.
+    # happen even when a post type raises mid-walk.
     # `seen` spans the run: a key reachable from two creators is the same post,
     # so the second sighting is a duplicate wherever it came from.
     #
     # creators_done counts creators scanned, not creators drained -- it moves
     # with the header's `scanning` field, which is the same producer position.
-    def produce(queue, targets:, sources:, since:, skip_ads:)
+    def produce(queue, targets:, post_types:, since:, skip_ads:)
       seen = Set.new
 
       in_walk_order(targets).each do |target|
-        wait_for_count(target[:username])
-        stream(user_id: target[:id], username: target[:username], sources:, since:, seen:, skip_ads:) do |item|
+        wait_for_count(target)
+        stream(user_id: target[:id], source: target[:source], username: target[:username],
+               post_types:, since:, seen:, skip_ads:) do |item|
           queue << [item, target[:username]]
         end
         @stats.bump(:creators_done)
@@ -310,12 +332,12 @@ module OFDL
     # The field is set only when there is a real wait: seeing it means the run
     # is held up by the disk, and it is the producer that is waiting, not the
     # whole run -- the pool keeps draining whatever is already queued.
-    def wait_for_count(username)
-      name = library.walk_key(username)
-      return if counted.passed?(name)
+    def wait_for_count(target)
+      key = library.walk_key(target[:source], target[:username])
+      return if counted.passed?(key)
 
-      @stats.scanning(creator: username, source: 'waiting for listing')
-      counted.await(name)
+      @stats.scanning(creator: target[:username], step: 'waiting for listing')
+      counted.await(key)
     end
 
     # A download that raises anything other than DownloadError would otherwise
@@ -326,36 +348,20 @@ module OFDL
       Outcome.new(item:, status: :failed, bytes: 0, message: "#{e.class}: #{e.message}")
     end
 
-    def each_row(source, user_id, since: nil, &)
-      enumerator =
-        case source
-        when 'posts' then api.posts(user_id, since:)
-        when 'archived' then api.posts(user_id, archived: true, since:)
-        when 'messages' then api.messages(user_id, since:)
-        when 'paid' then api.paid(user_id, since:)
-        when 'stories' then api.stories(user_id)
-        when 'highlights' then api.highlights(user_id)
-        else raise ConfigError, "unknown source #{source.inspect}"
-        end
-
-      enumerator.each(&)
-    rescue ApiError => e
-      @log.warn("#{source}: #{e.message} -- continuing without it")
-    end
-
     # There is no total to count towards -- enumeration is still running while
     # these land.
     # Each line names its creator, because the pool interleaves them: the run is
     # no longer one creator at a time. The path shown is the library layout,
-    # <creator>/<source>/<file>.
+    # <creator>/<post_type>/<file>.
     def report(outcome, tally, username)
       creator = Palette.blue(username)
 
       case outcome.status
       when :downloaded
-        @log.info("  ✓ #{creator}/#{outcome.item.source}/#{outcome.item.filename}  #{Display.humanize(outcome.bytes)}")
+        @log.info("  ✓ #{creator}/#{outcome.item.post_type}/#{outcome.item.filename}  " \
+                  "#{Display.humanize(outcome.bytes)}")
       when :protected
-        @log.info("  ~ #{creator}/#{outcome.item.source}/#{outcome.item.key}  DRM, skipped")
+        @log.info("  ~ #{creator}/#{outcome.item.post_type}/#{outcome.item.key}  DRM, skipped")
       when :failed
         @log.error("  ✗ #{creator}/#{outcome.item.filename} -- #{outcome.message}")
       else
