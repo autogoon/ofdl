@@ -53,21 +53,28 @@ module OFDL
           row
         end
 
+        # The grid, which Instagram serves only over GraphQL: `/feed/user/<id>/`
+        # answers 302 to the site root for every account. The variables name the
+        # account by username; every REST endpoint here takes the numeric id.
+        GRID_QUERY = { doc_id: '27954396937596316',
+                       name: 'PolarisProfilePostsTabContentQuery_connection' }.freeze
+
         # Newest first, so a page whose oldest row precedes `since` is the last
         # one worth asking for; see Api#exhausted?.
-        def timeline(user_id, since: nil)
+        def timeline(username, since: nil)
           Enumerator.new do |yielder|
             cursor = nil
+            number = 0
             loop do
-              params = { count: PAGE }
-              params[:max_id] = cursor if cursor
-              page = @client.get("/feed/user/#{user_id}/", params)
-              rows = Array(page['items'])
+              number += 1
+              page = grid_page(username, cursor, number)
+              rows = Array(page['edges']).filter_map { it['node'] }
               rows.each { yielder << it }
-              break if exhausted?(rows, since)
 
-              cursor = page['next_max_id'].to_s
-              break unless page['more_available'] && !cursor.empty?
+              info = page['page_info'] || {}
+              cursor = info['end_cursor']
+              break if rows.empty? || exhausted?(rows, since)
+              break unless info['has_next_page'] && cursor
             end
           end
         end
@@ -141,6 +148,24 @@ module OFDL
         end
 
         private
+
+        # `after` goes at the top level of the variables, not inside `data`, as
+        # in #reels_page. The three `__relay_internal__pv__` flags carry the
+        # values the web client sends: multi-caption carousels on, the
+        # reels-reco debug overlay and short drama off.
+        def grid_page(username, cursor, number)
+          variables = {
+            after: cursor, before: nil, last: nil, first: PAGE,
+            data: { count: PAGE, include_reel_media_seen_timestamp: true, include_relationship_info: true,
+                    latest_besties_reel_media: true, latest_reel_media: true },
+            include_multi_captions: true, username: username.to_s,
+            __relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider: true,
+            __relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider: false,
+            __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: false
+          }
+          page = graphql(GRID_QUERY, variables, label: "grid page #{number}")
+          page.dig('data', 'xdt_api__v1__feed__user_timeline_graphql_connection') || {}
+        end
 
         # `after` sits beside `data`, not inside it. Inside, the endpoint
         # ignores it and answers every request with the first page, and the

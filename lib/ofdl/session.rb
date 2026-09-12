@@ -181,7 +181,9 @@ module OFDL
 
       cutoff = cutoff_for(source, username, since:, all:)
 
-      adapter.each_row(wanted, user_id, since:, cutoff:, present: presence(source, username, all:)) do |post_type, row|
+      presence = presence(source, username, all:)
+
+      adapter.each_row(wanted, user_id, since:, cutoff:, present: presence, username:) do |post_type, row|
         listing = announce(post_type, username:, first: counts[post_type][:rows].zero?) if post_type != listing
         take_row(row, post_type:, adapter:, counts: counts[post_type], username:, since:, seen:, skip_ads:, idle:, &)
       end

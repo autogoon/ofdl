@@ -28,7 +28,7 @@ module OFDL
 
         def friendship(user_id) = (@friendship_rows || {}).fetch(user_id, { 'following' => true })
 
-        def timeline(_user_id, since: nil) = @timeline
+        def timeline(_username, since: nil) = @timeline
 
         def stories(_user_id) = @stories
 
@@ -56,9 +56,9 @@ module OFDL
         subject
       end
 
-      def rows(subject, post_types, present: nil)
+      def rows(subject, post_types, present: nil, username: 'creator')
         seen = []
-        subject.each_row(post_types, 7, present:) { |post_type, row| seen << [post_type, row['pk']] }
+        subject.each_row(post_types, 7, present:, username:) { |post_type, row| seen << [post_type, row['pk']] }
         seen
       end
 
@@ -122,7 +122,7 @@ module OFDL
         subject = source(api)
         seen = []
 
-        subject.each_row(%w[posts reels], 7) do |post_type, row|
+        subject.each_row(%w[posts reels], 7, username: 'creator') do |post_type, row|
           seen << [post_type, row['pk']]
           throw(:stop_feed) if post_type == 'posts'
         end

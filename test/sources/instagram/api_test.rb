@@ -86,6 +86,64 @@ module OFDL
         assert_equal(Instagram::Api::REELS_QUERY[:doc_id], client.forms.first[:doc_id])
       end
 
+      # Answers each POST with the next canned grid connection.
+      class FakeGridClient
+        attr_reader :forms, :labels
+
+        def initialize(pages)
+          @pages = pages
+          @forms = []
+          @labels = []
+        end
+
+        def post(_url, form, extra: {}, label: nil)
+          @forms << form
+          @labels << label
+          raise ApiError, 'ran past the canned pages' if @pages.empty?
+
+          { 'data' => { 'xdt_api__v1__feed__user_timeline_graphql_connection' => @pages.shift } }
+        end
+      end
+
+      def grid(pks, has_next: false, cursor: 'next', taken_at: 1_768_000_000)
+        { 'edges' => pks.map { { 'node' => { 'pk' => it, 'taken_at' => taken_at } } },
+          'page_info' => { 'has_next_page' => has_next, 'end_cursor' => cursor } }
+      end
+
+      def grid_api(pages)
+        client = FakeGridClient.new(pages)
+        [Instagram::Api.new(client:, tokens: FakeTokens.new), client]
+      end
+
+      # The grid is GraphQL, and its rows are the edges' nodes; see
+      # Api::GRID_QUERY.
+      def test_the_grid_yields_the_node_of_each_edge
+        api, = grid_api([grid(%w[10 20])])
+
+        assert_equal(%w[10 20], api.timeline('creator').map { it['pk'] })
+      end
+
+      def test_the_grid_query_names_the_creator_and_carries_the_cursor
+        api, client = grid_api([grid(%w[10], has_next: true, cursor: 'C1'), grid(%w[20])])
+        api.timeline('creator').to_a
+
+        first, last = client.forms.map { JSON.parse(it[:variables]) }
+
+        assert_equal('creator', first['username'])
+        assert_nil(first['after'])
+        assert_equal('C1', last['after'])
+        refute(last['data'].key?('after'), 'after must not be nested inside data')
+      end
+
+      # Newest first, so a page whose oldest row precedes `since` is the last
+      # one worth asking for.
+      def test_the_grid_walk_stops_at_a_page_older_than_since
+        api, client = grid_api([grid(%w[10], has_next: true, taken_at: 1_700_000_000)])
+
+        assert_equal(%w[10], api.timeline('creator', since: Time.at(1_760_000_000)).map { it['pk'] })
+        assert_equal(1, client.forms.size)
+      end
+
       # Answers the highlights tray with the collections given, each dated by
       # its newest story, and records which collections were then asked for.
       class FakeTrayClient

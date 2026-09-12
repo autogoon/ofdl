@@ -74,9 +74,9 @@ module OFDL
       #
       # Each feed is caught separately, so one ended early by Session leaves
       # the others to be walked; see Session#count_idle.
-      def each_row(post_types, user_id, since: nil, cutoff: nil, present: nil)
+      def each_row(post_types, user_id, since: nil, cutoff: nil, present: nil, username: nil)
         if post_types.include?('posts')
-          catch(:stop_feed) { walk_timeline(user_id, since:) { |row| yield 'posts', row } }
+          catch(:stop_feed) { walk_timeline(username, since:) { |row| yield 'posts', row } }
         end
         catch(:stop_feed) { walk_reels(user_id, present:) { |row| yield 'reels', row } } if post_types.include?('reels')
 
@@ -99,7 +99,11 @@ module OFDL
         @client ||= Client.new(
           jar:, transport: @transport, stats: @stats, base: BASE, log: @log,
           rate_limiter: RateLimiter.new(@config.requests_per_second),
-          extra_headers: { 'x-ig-app-id' => APP_ID, 'referer' => 'https://www.instagram.com/' }
+          # The grid query answers 403 with an HTML body without `x-csrftoken`,
+          # which the web client sends on every request from the cookie of the
+          # same name.
+          extra_headers: { 'x-ig-app-id' => APP_ID, 'referer' => 'https://www.instagram.com/',
+                           'x-csrftoken' => jar['csrftoken'].to_s }
         )
       end
 
@@ -128,8 +132,13 @@ module OFDL
         @log.debug("#{username}: could not read follow status (#{e.message})")
       end
 
-      def walk_timeline(user_id, since:, &)
-        api.timeline(user_id, since:).each(&)
+      # A target with no username is skipped: Api::GRID_QUERY names the account
+      # by username, and the numeric id the other endpoints take does not
+      # identify it to that query.
+      def walk_timeline(username, since:, &)
+        return @log.warn('posts: no username for this creator -- continuing without it') if username.nil?
+
+        api.timeline(username, since:).each(&)
       rescue ApiError => e
         @log.warn("posts: #{e.message} -- continuing without it")
       end

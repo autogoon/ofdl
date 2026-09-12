@@ -77,7 +77,7 @@ module OFDL
       #
       # A feed that raises is skipped; the remaining feeds are still read, and
       # so is a feed Session ends early; see Session#count_idle.
-      def each_row(post_types, user_id, since: nil, cutoff: nil, present: nil)
+      def each_row(post_types, user_id, since: nil, cutoff: nil, present: nil, username: nil)
         post_types.each do |post_type|
           catch(:stop_feed) { feed(post_type, user_id, since:).each { yield post_type, it } }
         rescue ApiError => e
