@@ -87,38 +87,25 @@ actually has is that app's own list, and `Session#stream` walks the two
 intersected — so naming a post type only one app carries selects it there and is
 absent on the other rather than failing the run.
 
-### Where a walk stops
+### Ordered and unordered feeds
 
-A feed read newest first ends once `Session#count_idle` has counted three rows
-running whose every item is already on disk or was already seen this run. The
-third throws `:stop_feed`, which the adapter catches around that one feed, so
-the run's other feeds are still walked. Three, because both apps let a creator
-pin posts to the top of a listing. A row with no media leaves the count
-unchanged: a text-only post yields no item to judge.
+`ordered?` answers whether a post type's feed is read newest first. Such a feed
+can be stopped part way: `Session#count_idle` counts the rows with nothing left
+to do and throws `:stop_feed`, which each adapter catches around one feed so the
+remaining feeds are still read. `Sources::OnlyFans::ORDERED` and
+`Sources::Instagram::ORDERED` name those feeds, and `Session#idle_verdicts` sets
+what `--since` and `--all` count. Where `Session::STOP_AFTER` such rows run
+together part way down a feed, everything older goes unread until a run under
+`--since` or `--all`.
 
-`--since` counts rows older than the date instead, and a row already on disk
-leaves that count unchanged. `Session#note_gap` warns that the posts before the
-date are not on disk, and the run that fetches them has to read past the posts
-that are. `--all` counts no row at all, and every feed is read to its end.
-
-`Sources::OnlyFans::ORDERED` and `Sources::Instagram::ORDERED` name the feeds
-these counts apply to. Stories and highlights are in neither: a highlight tray
-pages over collections by recency while the stories inside one collection carry
-their own dates, so a row already on disk says nothing about the dates in the
-next collection. Each is one or two requests.
-
-A gap deeper than three rows — an interrupted run, a failed download, a post
-type an earlier run did not ask for — is stepped over until `--since` or `--all`
-reads past it.
-
-A listing that dates its rows before they are fetched needs no count at all.
-Instagram's highlight tray gives each collection's `latest_reel_media`, the date
-of the newest story in it, so `Sources::Instagram::Api#highlights` skips a
-collection holding nothing newer than the cutoff and spends no request on it.
-`Session#cutoff_for` sets that cutoff: the `--since` date, or with no date the
-newest file already held for that post type, or none under `--all`. OnlyFans' highlights listing carries `createdAt`, the date the
-collection was made rather than the date of the newest story in it, so it cannot
-be tested this way.
+Stories and highlights are in neither list, because the position of a collection
+in a tray does not order the dates of the stories inside it. A story tray is one
+request; a highlight tray is one request per collection. Where the tray dates a
+collection before it is fetched, that collection's request is skipped:
+`Sources::Instagram::Api#highlights` tests `latest_reel_media` against the date
+`Session#cutoff_for` gives it. OnlyFans' highlights carry `createdAt`, the date
+the collection was made rather than the date of its newest story, so a
+collection there is fetched whatever its stories' dates.
 
 ### Instagram
 
@@ -156,69 +143,30 @@ listing carries dates.
 
 ## Enumeration and downloading run together
 
-Listing is the slow half. It's paced at a couple of requests a second and a
-large timeline runs to hundreds of pages, so walking every post type to the end
-before fetching anything would waste most of the run. Instead the producer
-pushes each item onto a bounded queue and the download pool takes from it, and
-the first file lands while the second page is still being listed.
+Listing is slower than downloading: it is paced by `requests_per_second`, and a
+large timeline runs to hundreds of pages. So `Session#produce` pushes each item
+onto a bounded queue as it lists, and a pool of workers takes from it; the first
+file is written while the second page is still being listed. `QUEUE_DEPTH` in
+`Session` bounds the queue for backpressure rather than capacity.
 
-There's one queue and one pool for the whole run, not one per creator. That
-means the producer crosses a creator boundary without waiting for that creator's
-downloads to finish, so a worker can be fetching for a creator the producer has
-already moved past. That's why the username travels on the queue next to its
-item, and why every log line and panel row names its creator.
+One queue and one pool serve the whole run, not one per creator, so a worker can
+be fetching for a creator the producer has already finished listing. Each item
+is queued with its creator's username, and every log line and panel row names
+that creator.
 
-`QUEUE_DEPTH` in `Session` bounds the queue at 256, and the bound is there for
-backpressure, not capacity. The producer is paced only by `requests_per_second`
-and yields a page at a time, so with an unbounded queue the producer would run
-to the end of every post type while the pool was still draining the first pages.
-Memory would scale with the size of the library instead of with concurrency, and
-`queued` would show the whole timeline rather than what's actually waiting.
+The producer decides what becomes of an item before queueing it.
+`Session#verdict_for` returns `:old`, `:duplicate`, `:present`, `:advert` or
+`:queued`, and both the counters and the panel follow from that answer. The
+producer runs the deduplication and the on-disk test for the same reason: a
+worker running them instead would leave `queued` counting work no worker will
+do.
 
-The bound also caps the listing a run does that it never uses. Once the queue is
-full the producer blocks, so a run stopped with Ctrl-C has listed at most 256
-items beyond what it downloaded, rather than every post type to the end. Those
-unmade requests are a saving only for a run that doesn't finish — a completed
-run lists exactly the same pages either way.
+`on disk` is counted by a third thread. `Session#count_library` reads the output
+tree while the listing runs, and `Watermark` blocks the producer until the count
+has finished a creator's directory, so no file is counted both as `on_disk` by
+the count and as `downloaded` by a worker.
 
-The bound doesn't slow the request rate down. Every API call goes through one
-`RateLimiter` on the `Client`, so `requests_per_second` sets the request rate an
-app sees. The queue bound sets only how far ahead of the downloads the listing
-is allowed to get.
-
-The producer also does the deduplication — the same media often appears in both
-a timeline and the paid feed, and the first sighting wins — and the check for
-what is already on disk. Both have to happen there: `queued` should only count
-work that will actually be done, or a re-run puts the entire library through the
-queue.
-
-`Session#verdict_for` applies those tests in one order and returns what became
-of the item: `:old`, `:duplicate`, `:present`, `:advert` or `:queued`. The
-counters and the panel both read that answer. The advert test is `Advert`, which
-reads the post text; `Advert.reason` runs once per row rather than once per
-item, and only when `skip_ads` is set.
-
-The panel's `on disk` is not counted by the producer. `Session#count_library`
-walks the output tree on its own thread, started before the subscriptions are
-resolved. The walk covers the creators named on the command line, or the whole
-tree when no names were given. The producer's wait is a position in an ordered
-walk, so an unscoped walk makes a run naming one creator wait for every
-directory that sorts before that creator's; scoping the walk to that creator
-removes the wait.
-
-`Watermark` is what makes running that walk alongside the listing safe.
-`Library#tally` walks creators in `<source>/<creator>` order and reports each
-one as it finishes; `Session#produce` orders its targets by the same key and
-waits for the walk to pass a creator before listing it. So no worker writes into
-a directory the walk has still to read, which would count that file twice — once
-in the walk and once as `downloaded`. The wait is almost always already
-satisfied: the walk is filesystem-bound, and the listing it races is paced at a
-couple of requests a second. A creator with no directory yet needs no special
-case, because the walk is ordered: a name it has gone past without reporting is
-a name it does not hold.
-
-There's no "N items to download" headline, because nothing knows the total until
-the last page has been listed.
+No total is printed, because none is known until the last page has been listed.
 
 ## output_dir is never created
 
