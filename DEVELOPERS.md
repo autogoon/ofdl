@@ -72,6 +72,7 @@ An adapter answers:
 | `creators`                      | targets to archive with no name given             |
 | `resolve(username)`             | one target                                        |
 | `each_row(post_types, id, ...)` | yields `[post_type, row]`                         |
+| `ordered?(post_type)`           | whether that feed is read newest first            |
 | `items_from(row, post_type:)`   | `Item`s                                           |
 | `advert_reason(row, creator:)`  | why a post is an advert, or nil                   |
 | `status_lines`                  | yields the label/value pairs `ofdl status` prints |
@@ -85,6 +86,30 @@ for.
 actually has is that app's own list, and `Session#stream` walks the two
 intersected — so naming a post type only one app carries selects it there and is
 absent on the other rather than failing the run.
+
+### Where a walk stops
+
+A feed read newest first ends once `Session#count_idle` has counted three rows
+running whose every item is already on disk or was already seen this run. The
+third throws `:stop_feed`, which the adapter catches around that one feed, so
+the run's other feeds are still walked. Three, because both apps let a creator
+pin posts to the top of a listing. A row with no media leaves the count
+unchanged: a text-only post yields no item to judge.
+
+`--since` counts rows older than the date instead, and a row already on disk
+leaves that count unchanged. `Session#note_gap` warns that the posts before the
+date are not on disk, and the run that fetches them has to read past the posts
+that are. `--all` counts no row at all, and every feed is read to its end.
+
+`Sources::OnlyFans::ORDERED` and `Sources::Instagram::ORDERED` name the feeds
+these counts apply to. Stories and highlights are in neither: a highlight tray
+pages over collections by recency while the stories inside one collection carry
+their own dates, so a row already on disk says nothing about the dates in the
+next collection. Each is one or two requests.
+
+A gap deeper than three rows — an interrupted run, a failed download, a post
+type an earlier run did not ask for — is stepped over until `--since` or `--all`
+reads past it.
 
 ### Instagram
 
@@ -104,20 +129,21 @@ returning a fresh cursor and `has_next_page` true.
 
 The reels listing carries each reel's thumbnail but neither its video nor its
 timestamp, so a downloadable reel costs a second request to `/media/<pk>/info/`.
-`Library#key?` answers presence from a key alone, `Session` passes that as
-`present` into `each_row`, and `walk_reels` asks before it fetches: a rerun over
-an archived account spends one request on the listing and none on the reels.
+Under `--all`, `Library#key?` answers presence from a key alone, `Session`
+passes that as `present` into `each_row`, and `walk_reels` asks before it
+fetches: a rerun over an archived account spends one request on the listing and
+none on the reels. Under every other mode `present` answers false, because a
+reel already on disk is what ends the walk and `Session` never sees one the
+adapter has dropped.
 
 A reel therefore produces two items from one row, the video and its thumbnail.
 Both would key as `<pk>_<pk>`, so the thumbnail's media id carries a `_thumb`
 role and `Library::MEDIA_ID` matches it. OnlyFans media ids are all digits, so
 its keys and filenames are unchanged.
 
-`--since` ends the reels walk only from a row a request has already been spent
-on, because the listing carries no timestamp to compare. The tab is newest
-first, so three reels in a row older than `--since` end it. Three is the number
-of reels an account can pin, and a pinned reel is listed first whatever its
-date.
+A reel's date arrives only with the `/media/<pk>/info/` row, so under `--since`
+the reels tab reaches the stop rule above one request later than a feed whose
+listing carries dates.
 
 ## Enumeration and downloading run together
 

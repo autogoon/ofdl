@@ -10,12 +10,11 @@ module OFDL
       class FakeApi
         attr_reader :fetched
 
-        def initialize(reels: [], timeline: [], stories: [], missing: [], taken_at: {})
+        def initialize(reels: [], timeline: [], stories: [], missing: [])
           @reels = reels
           @timeline = timeline
           @stories = stories
           @missing = missing
-          @taken_at = taken_at
           @fetched = []
         end
 
@@ -37,8 +36,7 @@ module OFDL
           @fetched << media_id
           return nil if @missing.include?(media_id)
 
-          { 'pk' => media_id, 'taken_at' => @taken_at.fetch(media_id, 1_768_000_000),
-            'media_type' => 2, 'product_type' => 'clips',
+          { 'pk' => media_id, 'taken_at' => 1_768_000_000, 'media_type' => 2, 'product_type' => 'clips',
             'video_versions' => [{ 'url' => "https://cdn.example.com/#{media_id}.mp4", 'width' => 720 }],
             'image_versions2' => { 'candidates' => [{ 'url' => "https://cdn.example.com/#{media_id}.jpg",
                                                       'width' => 1080 }] } }
@@ -58,9 +56,9 @@ module OFDL
         subject
       end
 
-      def rows(subject, post_types, present: nil, since: nil)
+      def rows(subject, post_types, present: nil)
         seen = []
-        subject.each_row(post_types, 7, since:, present:) { |post_type, row| seen << [post_type, row['pk']] }
+        subject.each_row(post_types, 7, present:) { |post_type, row| seen << [post_type, row['pk']] }
         seen
       end
 
@@ -116,24 +114,20 @@ module OFDL
         assert_equal(%w[10 20], api.fetched)
       end
 
-      # The tab is newest first, so once it is past `--since` the rest of the
-      # pages are reels the run would only discard.
-      def test_the_walk_stops_once_the_reels_are_older_than_since
-        old = { '30' => 1_700_000_000, '40' => 1_700_000_000, '50' => 1_700_000_000, '60' => 1_700_000_000 }
-        api = FakeApi.new(reels: %w[10 20 30 40 50 60], taken_at: old)
+      # Session ends a feed by throwing, and each feed is caught on its own, so
+      # the reels tab stopping leaves the grid to be walked; see
+      # Session#count_idle.
+      def test_a_feed_that_session_stops_leaves_the_others_walked
+        api = FakeApi.new(reels: %w[10 20], timeline: [{ 'pk' => '30' }, { 'pk' => '40' }])
+        subject = source(api)
+        seen = []
 
-        rows(source(api), %w[reels], since: Time.at(1_760_000_000))
+        subject.each_row(%w[posts reels], 7) do |post_type, row|
+          seen << [post_type, row['pk']]
+          throw(:stop_feed) if post_type == 'posts'
+        end
 
-        assert_equal(%w[10 20 30 40 50], api.fetched)
-      end
-
-      # See Sources::Instagram::PINNED.
-      def test_a_pinned_old_reel_does_not_stop_the_walk
-        api = FakeApi.new(reels: %w[10 20 30 40], taken_at: { '10' => 1_700_000_000 })
-
-        rows(source(api), %w[reels], since: Time.at(1_760_000_000))
-
-        assert_equal(%w[10 20 30 40], api.fetched)
+        assert_equal([%w[posts 30], %w[reels 10], %w[reels 20]], seen)
       end
 
       # A reel deleted between the listing and the request returns nothing;

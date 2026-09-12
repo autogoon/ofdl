@@ -105,7 +105,8 @@ module OFDL
       '  ofdl fetch alice of/bob              two creators, configured post types',
       '  ofdl fetch alice --post-types posts  one creator, one post type',
       '  ofdl fetch --source of               every creator on one app',
-      '  ofdl fetch --since 2026-01-01        everything posted on or after a date'
+      '  ofdl fetch --since 2026-01-01        everything posted on or after a date',
+      '  ofdl fetch --all                     every post, not only the new ones'
     ].freeze
     private_constant :USAGE_FOOTER
 
@@ -151,6 +152,7 @@ module OFDL
         o.on('--post-types type,...', Array, 'narrow to some of the post types; defaults to all of',
              Config::POST_TYPES.join(', ')) { options[:post_types] = it }
         o.on('--since DATE', 'only media posted on or after DATE (YYYY-MM-DD)') { options[:since] = parse_date(it) }
+        o.on('--all', 'read every post, not only back to what is on disk') { options[:all] = true }
         o.on('--include-ads', 'keep posts that advertise another creator') { options[:skip_ads] = false }
         o.on('--no-images', 'do not preview downloaded images in the terminal') { options[:images] = false }
       end
@@ -209,12 +211,11 @@ module OFDL
     def cmd_fetch(argv)
       # post_types stays nil unless asked for: the configured set can differ
       # per app, and only Session knows which app a target is on.
-      options = { sources: Source::ALL, post_types: nil, since: nil,
+      options = { sources: Source::ALL, post_types: nil, since: nil, all: false,
                   images: @config.images?, skip_ads: @config.skip_ads? }
       fetch_parser(options).parse!(argv)
 
-      unknown = options[:post_types].to_a - Config::POST_TYPES
-      raise ConfigError, "unknown post types: #{unknown.join(', ')}" if unknown.any?
+      validate!(options)
 
       # Resolution runs inside the dashboard: listing subscriptions is several
       # paced API calls, and the screen stays blank until the dashboard starts.
@@ -232,7 +233,7 @@ module OFDL
         session.stats.bump(:creators_total, targets.size)
 
         session.archive(targets:, post_types: options[:post_types], since: options[:since],
-                        skip_ads: options[:skip_ads])
+                        all: options[:all], skip_ads: options[:skip_ads])
 
         dashboard.stop
 
@@ -241,6 +242,15 @@ module OFDL
         report_gaps
         session.scratch.remove!
       end
+    end
+
+    # `--all` reads a feed to its end and `--since` reads it back to a date, so
+    # a run given both has named two stopping points; see
+    # Session#idle_verdicts.
+    def validate!(options)
+      unknown = options[:post_types].to_a - Config::POST_TYPES
+      raise ConfigError, "unknown post types: #{unknown.join(', ')}" if unknown.any?
+      raise ConfigError, 'give --all or --since, not both' if options[:all] && options[:since]
     end
 
     # The creators named on the command line, as targets without an id, or `nil`
@@ -277,7 +287,7 @@ module OFDL
 
       puts("\n\e[33m--since did not reach back far enough for:\e[0m")
       gaps.each { puts("  #{it}") }
-      puts('Rerun those with an earlier --since, or with none, to fill the gap.')
+      puts('Rerun those with an earlier --since, or with --all, to fill the gap.')
     end
 
     def resolve(argv, options)

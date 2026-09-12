@@ -24,11 +24,6 @@ module OFDL
 
       POST_TYPES = %w[posts reels stories highlights avatar].freeze
 
-      # Reels an account can pin to the top of the reels tab. A pinned reel is
-      # listed first whatever its date, so #walk_reels waits for three old
-      # reels in a row before it takes the walk to have passed `--since`.
-      PINNED = 3
-
       def initialize(config:, log:, stats:, transport:)
         @config = config
         @log = log
@@ -64,17 +59,29 @@ module OFDL
       # read as an advert; `--include-ads` and `skip_ads` do not apply.
       def advert_reason(_row, creator: nil) = nil
 
+      # The feeds read newest first, and so the ones a run can stop part way
+      # through; see Session#count_idle. A story tray and a highlight tray page
+      # over collections rather than dates, and an avatar is a single row.
+      ORDERED = %w[posts reels].freeze
+
+      def ordered?(post_type) = ORDERED.include?(post_type)
+
       # The timeline is the grid, and a grid may hold reels: an account can
       # have a reel in both places, or reels the grid never shows. So `posts`
       # walks the timeline and `reels` walks the reels tab, and a reel found in
       # both is deduplicated by key like any other repeat; see
       # Session#verdict_for.
+      #
+      # Each feed is caught separately, so one ended early by Session leaves
+      # the others to be walked; see Session#count_idle.
       def each_row(post_types, user_id, since: nil, present: nil)
-        walk_timeline(user_id, since:) { |row| yield 'posts', row } if post_types.include?('posts')
-        walk_reels(user_id, since:, present:) { |row| yield 'reels', row } if post_types.include?('reels')
+        if post_types.include?('posts')
+          catch(:stop_feed) { walk_timeline(user_id, since:) { |row| yield 'posts', row } }
+        end
+        catch(:stop_feed) { walk_reels(user_id, present:) { |row| yield 'reels', row } } if post_types.include?('reels')
 
         (post_types - %w[posts reels]).each do |post_type|
-          rows_for(post_type, user_id).each { yield post_type, it }
+          catch(:stop_feed) { rows_for(post_type, user_id).each { yield post_type, it } }
         rescue ApiError => e
           @log.warn("#{post_type}: #{e.message} -- continuing without it")
         end
@@ -128,23 +135,19 @@ module OFDL
       end
 
       # The reels listing carries each reel's thumbnail but neither its video
-      # nor its timestamp, so a reel needs a second request to be downloadable.
-      # That request is made only when a key is missing from the library: a
-      # rerun over an archived account makes none of them.
-      #
-      # The tab is newest first, so `since` can end the walk. Only a row a
-      # request has already been spent on carries a timestamp to compare, and
-      # the walk ends once PINNED consecutive rows are older than `since`.
-      def walk_reels(user_id, since:, present:)
-        old = 0
+      # nor its timestamp, so a reel needs a second request, to
+      # /media/<pk>/info/, before it can be downloaded. Under `--all` the info
+      # request is made only when a key is missing from the library, so a rerun
+      # over an archived account makes none. Under every other mode `present`
+      # answers false: a reel already on disk is what ends the walk, and
+      # Session never sees one the adapter has dropped; see Session#presence.
+      def walk_reels(user_id, present:)
         api.reels(user_id).each do |summary|
           pk = summary['pk'] or next
           next if present && Media.keys_for(pk).all? { present.call('reels', it) }
 
           row = api.media(pk) or next
-          old = since && Media.posted_at(row) < since ? old + 1 : 0
           yield row
-          break if old >= PINNED
         end
       rescue ApiError => e
         @log.warn("reels: #{e.message} -- continuing without it")

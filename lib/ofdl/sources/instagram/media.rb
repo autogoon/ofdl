@@ -35,10 +35,6 @@ module OFDL
           # and skips that request; see Sources::Instagram#walk_reels.
           def keys_for(media_id) = ["#{media_id}_#{media_id}", "#{media_id}_#{media_id}_#{THUMBNAIL_ROLE}"]
 
-          # When a row was posted. Public because
-          # Sources::Instagram#walk_reels stops on the timestamp.
-          def posted_at(row) = timestamp(row)
-
           private
 
           # A carousel's children are the media; the container has no file of

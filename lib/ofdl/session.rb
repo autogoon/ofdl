@@ -135,7 +135,7 @@ module OFDL
     # the CLI announces the run in this order before archive starts.
     def in_walk_order(targets) = targets.sort_by { library.walk_key(it[:source], it[:username]) }
 
-    def archive(targets:, post_types: nil, since: nil, skip_ads: @config.skip_ads?)
+    def archive(targets:, post_types: nil, since: nil, all: false, skip_ads: @config.skip_ads?)
       queue = SizedQueue.new(QUEUE_DEPTH)
       summary = Summary.empty
       tally = { done: 0, bytes: 0 }
@@ -160,7 +160,7 @@ module OFDL
         end
       end
 
-      produce(queue, targets:, post_types:, since:, skip_ads:)
+      produce(queue, targets:, post_types:, since:, all:, skip_ads:)
       @stats.done_scanning
       consumers.each(&:join)
       @log.clear_progress
@@ -171,16 +171,17 @@ module OFDL
     # the same media often appears in both a timeline and the paid feed.
     # The feeds asked for, or the configured set when none were, narrowed to
     # the ones this app has; see Config::POST_TYPES.
-    def stream(user_id:, post_types: nil, source: Source::ONLYFANS, since: nil, username: nil, seen: Set.new,
-               skip_ads: @config.skip_ads?)
+    def stream(user_id:, post_types: nil, source: Source::ONLYFANS, since: nil, all: false, username: nil,
+               seen: Set.new, skip_ads: @config.skip_ads?, &)
       adapter = adapter_for(source)
       wanted = (post_types || @config.post_types(source)) & adapter.post_types
       counts = Hash.new { |types, type| types[type] = Hash.new(0) }
+      idle = idle_verdicts(since:, all:)
       listing = nil
 
-      adapter.each_row(wanted, user_id, since:, present: presence(source, username)) do |post_type, row|
+      adapter.each_row(wanted, user_id, since:, present: presence(source, username, all:)) do |post_type, row|
         listing = announce(post_type, username:, first: counts[post_type][:rows].zero?) if post_type != listing
-        take_row(row, post_type:, adapter:, counts: counts[post_type], username:, since:, seen:, skip_ads:) { yield it }
+        take_row(row, post_type:, adapter:, counts: counts[post_type], username:, since:, seen:, skip_ads:, idle:, &)
       end
 
       counts.each { |post_type, tally| log_listing(post_type, tally) }
@@ -197,14 +198,36 @@ module OFDL
     QUEUE_DEPTH = 256
     private_constant :QUEUE_DEPTH
 
+    # Rows with nothing left to do that end a feed; see #count_idle. Three,
+    # because both apps let a creator pin posts to the top of a listing, where
+    # they are read before older ones whatever their date.
+    STOP_AFTER = 3
+    private_constant :STOP_AFTER
+
     # Answers whether a key is already on disk, for a source that must make a
     # further request to learn an item's URL: asking first keeps the request to
     # what is missing. Without a username there is no library to consult, which
     # is how tests drain the stream, and every key answers false.
-    def presence(source, username)
-      return ->(_post_type, _key) { false } unless username
+    #
+    # Only `--all` gets a true answer. Under every other mode a row already on
+    # disk is what ends the feed, so it has to reach #count_idle rather than be
+    # dropped by the adapter.
+    def presence(source, username, all:)
+      return ->(_post_type, _key) { false } unless all && username
 
       ->(post_type, key) { library.key?(key, source:, username:, post_type:) }
+    end
+
+    # The verdicts that leave a row with nothing to do, and so count towards
+    # STOP_AFTER. Under `--since` being on disk is not one of them: the run has
+    # been asked for every row back to the date, on disk or not, which is what
+    # fetches the posts #note_gap warns are missing. `--all` names no verdict,
+    # and every feed is read to its end.
+    def idle_verdicts(since:, all:)
+      return [] if all
+      return %i[old] if since
+
+      %i[present duplicate]
     end
 
     # One listing can carry two post types -- an Instagram timeline holds reels
@@ -224,13 +247,13 @@ module OFDL
                 "#{tally[:queued]} queued#{tail_note(tally)}")
     end
 
-    def take_row(row, post_type:, adapter:, counts:, username:, since:, seen:, skip_ads:)
+    def take_row(row, post_type:, adapter:, counts:, username:, since:, seen:, skip_ads:, idle:)
       counts[:rows] += 1
       # Read once per row rather than once per item, and only when the answer
       # would be acted on.
       advert = skip_ads && adapter.advert_reason(row, creator: username)
 
-      adapter.items_from(row, post_type:).each do |item|
+      verdicts = adapter.items_from(row, post_type:).map do |item|
         counts[:media] += 1
         count_discovery(item)
 
@@ -241,7 +264,26 @@ module OFDL
         when :advert then @log.debug("#{post_type}/#{item.post_id}: advertises #{advert}, skipped")
         when :queued then yield item
         end
+        verdict
       end
+
+      count_idle(verdicts, counts:, idle: adapter.ordered?(post_type) ? idle : [])
+    end
+
+    # A feed read newest first can be ended by STOP_AFTER rows with nothing
+    # left to do: the walk has reached what an earlier run took. A row with no
+    # media leaves the count unchanged, a text-only post yielding no item to
+    # judge, and a feed the adapter does not call ordered never ends early.
+    #
+    # The stop is thrown rather than returned. One Instagram listing yields two
+    # post types, so the walk to end is that of one feed inside the adapter
+    # rather than #each_row, and the adapter catches the throw around each
+    # feed.
+    def count_idle(verdicts, counts:, idle:)
+      return if idle.empty? || verdicts.empty?
+
+      counts[:idle] = verdicts.all? { idle.include?(it) } ? counts[:idle] + 1 : 0
+      throw(:stop_feed) if counts[:idle] >= STOP_AFTER
     end
 
     # What becomes of one item, and the one place the order of the tests is
@@ -311,13 +353,13 @@ module OFDL
     #
     # creators_done counts creators scanned, not creators drained -- it moves
     # with the header's `scanning` field, which is the same producer position.
-    def produce(queue, targets:, post_types:, since:, skip_ads:)
+    def produce(queue, targets:, post_types:, since:, all:, skip_ads:)
       seen = Set.new
 
       in_walk_order(targets).each do |target|
         wait_for_count(target)
         stream(user_id: target[:id], source: target[:source], username: target[:username],
-               post_types:, since:, seen:, skip_ads:) do |item|
+               post_types:, since:, all:, seen:, skip_ads:) do |item|
           queue << [item, target[:username]]
         end
         @stats.bump(:creators_done)
