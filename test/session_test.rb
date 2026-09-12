@@ -261,6 +261,31 @@ module OFDL
       assert_equal([1, 2, 3, 4], read)
     end
 
+    # What a listing that dates its rows before fetching them is tested
+    # against; see Session#cutoff_for.
+    def cutoff(session, post_type, since: nil, all: false)
+      session.send(:cutoff_for, Source::ONLYFANS, 'alice', since:, all:).call(post_type)
+    end
+
+    def test_the_cutoff_is_the_date_given
+      session = scanning_session({})
+
+      assert_equal(Time.utc(2026, 1, 1), cutoff(session, 'highlights', since: Time.utc(2026, 1, 1)))
+    end
+
+    def test_the_cutoff_without_a_date_is_the_newest_file_held
+      session = scanning_session({})
+      session.library.define_singleton_method(:newest) { |source:, username:, post_type:| Time.utc(2026, 2, 3) }
+
+      assert_equal(Time.utc(2026, 2, 3), cutoff(session, 'highlights'))
+    end
+
+    def test_all_sets_no_cutoff
+      session = scanning_session({})
+
+      assert_nil(cutoff(session, 'highlights', all: true))
+    end
+
     # Highlights page over collections rather than by date, so rows already on
     # disk are no evidence of how far back the walk has reached.
     def test_a_feed_that_is_not_read_newest_first_never_stops

@@ -179,7 +179,9 @@ module OFDL
       idle = idle_verdicts(since:, all:)
       listing = nil
 
-      adapter.each_row(wanted, user_id, since:, present: presence(source, username, all:)) do |post_type, row|
+      cutoff = cutoff_for(source, username, since:, all:)
+
+      adapter.each_row(wanted, user_id, since:, cutoff:, present: presence(source, username, all:)) do |post_type, row|
         listing = announce(post_type, username:, first: counts[post_type][:rows].zero?) if post_type != listing
         take_row(row, post_type:, adapter:, counts: counts[post_type], username:, since:, seen:, skip_ads:, idle:, &)
       end
@@ -216,6 +218,22 @@ module OFDL
       return ->(_post_type, _key) { false } unless all && username
 
       ->(post_type, key) { library.key?(key, source:, username:, post_type:) }
+    end
+
+    # The date below which a listing need not be read at all, per post type,
+    # for a listing that names its rows' dates before they are fetched: an
+    # Instagram highlight tray gives each collection's newest story, so a
+    # collection below the cutoff costs no request at all rather than being
+    # counted by #count_idle a request later.
+    #
+    # `--since` sets it to the date asked for. With no date it is the newest
+    # file already held for that post type, which is the point #count_idle
+    # stops a feed at. `--all` sets no cutoff.
+    def cutoff_for(source, username, since:, all:)
+      return ->(_post_type) {} if all || username.nil?
+      return ->(_post_type) { since } if since
+
+      ->(post_type) { library.newest(source:, username:, post_type:) }
     end
 
     # The verdicts that leave a row with nothing to do, and so count towards

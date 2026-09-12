@@ -109,10 +109,18 @@ module OFDL
         def stories(user_id) = reel_items(user_id.to_s)
 
         # The tray names the collections; each one's media is a second request.
-        def highlights(user_id)
+        #
+        # A tray entry carries `latest_reel_media`, the date of the newest story
+        # in that collection, so a collection holding nothing newer than `since`
+        # is skipped without the request. The tray is not in date order -- a
+        # creator arranges it -- so each entry is tested rather than the walk
+        # ended; see Session#cutoff_for for where the date comes from.
+        def highlights(user_id, since: nil)
           Enumerator.new do |yielder|
             tray = @client.get("/highlights/#{user_id}/highlights_tray/")
             Array(tray['tray']).each do |collection|
+              next if since && Time.at(collection['latest_reel_media'].to_i) < since
+
               reel_items(collection['id']).each { yielder << it }
             end
           end

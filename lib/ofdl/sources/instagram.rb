@@ -74,14 +74,14 @@ module OFDL
       #
       # Each feed is caught separately, so one ended early by Session leaves
       # the others to be walked; see Session#count_idle.
-      def each_row(post_types, user_id, since: nil, present: nil)
+      def each_row(post_types, user_id, since: nil, cutoff: nil, present: nil)
         if post_types.include?('posts')
           catch(:stop_feed) { walk_timeline(user_id, since:) { |row| yield 'posts', row } }
         end
         catch(:stop_feed) { walk_reels(user_id, present:) { |row| yield 'reels', row } } if post_types.include?('reels')
 
         (post_types - %w[posts reels]).each do |post_type|
-          catch(:stop_feed) { rows_for(post_type, user_id).each { yield post_type, it } }
+          catch(:stop_feed) { rows_for(post_type, user_id, cutoff:).each { yield post_type, it } }
         rescue ApiError => e
           @log.warn("#{post_type}: #{e.message} -- continuing without it")
         end
@@ -153,10 +153,10 @@ module OFDL
         @log.warn("reels: #{e.message} -- continuing without it")
       end
 
-      def rows_for(post_type, user_id)
+      def rows_for(post_type, user_id, cutoff:)
         case post_type
         when 'stories' then api.stories(user_id)
-        when 'highlights' then api.highlights(user_id)
+        when 'highlights' then api.highlights(user_id, since: cutoff&.call('highlights'))
         when 'avatar' then api.avatar(user_id)
         else raise ConfigError, "unknown post type #{post_type.inspect}"
         end

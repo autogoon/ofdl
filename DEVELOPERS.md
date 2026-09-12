@@ -111,6 +111,15 @@ A gap deeper than three rows — an interrupted run, a failed download, a post
 type an earlier run did not ask for — is stepped over until `--since` or `--all`
 reads past it.
 
+A listing that dates its rows before they are fetched needs no count at all.
+Instagram's highlight tray gives each collection's `latest_reel_media`, the date
+of the newest story in it, so `Sources::Instagram::Api#highlights` skips a
+collection holding nothing newer than the cutoff and spends no request on it.
+`Session#cutoff_for` sets that cutoff: the `--since` date, or with no date the
+newest file already held for that post type, or none under `--all`. OnlyFans' highlights listing carries `createdAt`, the date the
+collection was made rather than the date of the newest story in it, so it cannot
+be tested this way.
+
 ### Instagram
 
 Most endpoints are the REST ones the web client calls, and they need the cookies

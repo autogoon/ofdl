@@ -18,6 +18,7 @@ module OFDL
       @root = Pathname(root)
       @log = log
       @keys = {}
+      @newest = {}
       @mutex = Mutex.new
     end
 
@@ -51,6 +52,19 @@ module OFDL
       cache(source, username, post_type) do
         key_set(media_files(@root.join(source.to_s, sanitise(username), post_type.to_s)))
       end.include?(key)
+    end
+
+    # The date of the newest file held for one creator's post type, or nil when
+    # the directory holds none. A filename leads with the date its media was
+    # posted (see Item#basename), so a listing answers this and no request is
+    # made. A listing that can name its rows' dates before fetching them uses
+    # it to skip the ones already held; see Sources::Instagram::Api#highlights.
+    def newest(source:, username:, post_type:)
+      dir = @root.join(source.to_s, sanitise(username), post_type.to_s)
+      @mutex.synchronize do
+        @newest[cache_key(source, username, post_type)] ||=
+          media_files(dir).filter_map { date_from(it.basename.to_s) }.max
+      end
     end
 
     def size_of(item, username:)
@@ -228,6 +242,14 @@ module OFDL
       dir.children.reject do |path|
         path.directory? || path.extname == '.part' || key_from(path.basename.to_s).nil?
       end
+    end
+
+    # "2026-01-14_1234_5678.mp4" yields 2026-01-14. A filename that does not
+    # lead with a date is not one this wrote.
+    def date_from(basename)
+      stamp = basename[/\A\d{4}-\d{2}-\d{2}/] or return nil
+
+      Time.new(*stamp.split('-').map(&:to_i))
     end
 
     def key_set(paths)

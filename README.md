@@ -160,8 +160,13 @@ already in `output_dir` end that feed, and nothing is downloaded twice.
 `--since DATE` reads back to a date whatever is on disk, and `--all` reads every
 feed to its end; the two cannot be given together. Use one of them after a run
 was interrupted or a download failed, because a hole deeper than three posts is
-passed over by the ordinary stop. Stories and highlights are not in date order
-in either app, so they are always read in full.
+passed over by the ordinary stop.
+
+Stories and highlights are not in date order, so the stop above does not apply
+to them. An Instagram highlight is skipped by date instead: the listing gives
+the date of the newest story in each highlight, and one holding nothing newer
+than the run asks for is never opened. OnlyFans highlights and the stories in
+both apps are read in full.
 
 ## Apps and post types
 

@@ -85,6 +85,42 @@ module OFDL
         assert_equal('token', client.forms.first[:fb_dtsg])
         assert_equal(Instagram::Api::REELS_QUERY[:doc_id], client.forms.first[:doc_id])
       end
+
+      # Answers the highlights tray with the collections given, each dated by
+      # its newest story, and records which collections were then asked for.
+      class FakeTrayClient
+        attr_reader :asked
+
+        def initialize(tray) = (@tray = tray) && @asked = []
+
+        def get(path, params = {})
+          return { 'tray' => @tray.map { |id, at| { 'id' => id, 'latest_reel_media' => at } } } if path.include?('tray')
+
+          @asked << params[:reel_ids]
+          { 'reels' => { params[:reel_ids] => { 'items' => [{ 'pk' => params[:reel_ids] }] } } }
+        end
+      end
+
+      def tray_api(tray)
+        client = FakeTrayClient.new(tray)
+        [Instagram::Api.new(client:, tokens: FakeTokens.new), client]
+      end
+
+      def test_a_collection_with_nothing_newer_than_since_costs_no_request
+        api, client = tray_api([['a', 1_760_000_000], ['b', 1_700_000_000], ['c', 1_770_000_000]])
+
+        api.highlights(7, since: Time.at(1_750_000_000)).to_a
+
+        assert_equal(%w[a c], client.asked)
+      end
+
+      def test_every_collection_is_asked_for_without_a_date
+        api, client = tray_api([['a', 1_760_000_000], ['b', 1_700_000_000]])
+
+        api.highlights(7).to_a
+
+        assert_equal(%w[a b], client.asked)
+      end
     end
   end
 end

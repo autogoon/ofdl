@@ -69,11 +69,15 @@ module OFDL
       # carries several post types yields them interleaved instead.
       #
       # `present` goes unused: an OnlyFans row arrives with its media's URLs in
-      # it, so no request is deferred until the library has been consulted.
+      # it, so no request is deferred until the library has been consulted. So
+      # does `cutoff`: the only listing that could use one is highlights, and
+      # its rows carry `createdAt`, the date the collection was made rather
+      # than the date of the newest story in it -- a collection made in 2023
+      # can hold a story from today.
       #
       # A feed that raises is skipped; the remaining feeds are still read, and
       # so is a feed Session ends early; see Session#count_idle.
-      def each_row(post_types, user_id, since: nil, present: nil)
+      def each_row(post_types, user_id, since: nil, cutoff: nil, present: nil)
         post_types.each do |post_type|
           catch(:stop_feed) { feed(post_type, user_id, since:).each { yield post_type, it } }
         rescue ApiError => e

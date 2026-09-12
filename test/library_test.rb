@@ -32,6 +32,24 @@ module OFDL
       assert(fresh.have?(subject, username: 'creator'))
     end
 
+    # The date a listing is tested against when no --since was given; see
+    # Session#cutoff_for.
+    def test_newest_reads_the_date_from_the_filenames
+      %w[2026-01-14 2026-03-02 2025-12-31].each_with_index do |date, index|
+        path = Pathname(@dir).join(Source::ONLYFANS, 'creator', 'posts', "#{date}_111_#{index}.jpg")
+        path.dirname.mkpath
+        path.write('bytes')
+      end
+
+      newest = @library.newest(source: Source::ONLYFANS, username: 'creator', post_type: 'posts')
+
+      assert_equal(Time.new(2026, 3, 2), newest)
+    end
+
+    def test_newest_is_nil_when_the_directory_holds_nothing
+      assert_nil(@library.newest(source: Source::ONLYFANS, username: 'creator', post_type: 'posts'))
+    end
+
     # A marker written by one run is read back by the next as present, so the
     # item is not queued; see Library's `.drm` marker.
     def test_markers_count_as_present
