@@ -24,6 +24,11 @@ module OFDL
 
       POST_TYPES = %w[posts reels stories highlights avatar].freeze
 
+      # Reels an account can pin to the top of the reels tab. A pinned reel is
+      # listed first whatever its date, so #walk_reels waits for three old
+      # reels in a row before it takes the walk to have passed `--since`.
+      PINNED = 3
+
       def initialize(config:, log:, stats:, transport:)
         @config = config
         @log = log
@@ -127,17 +132,19 @@ module OFDL
       # That request is made only when a key is missing from the library: a
       # rerun over an archived account makes none of them.
       #
-      # `since` cannot end the walk early. The listing has no timestamp to
-      # compare, and the only row that carries one is the row a request has
-      # already been spent on -- so the pages are walked to the end and Session
-      # drops what is too old.
+      # The tab is newest first, so `since` can end the walk. Only a row a
+      # request has already been spent on carries a timestamp to compare, and
+      # the walk ends once PINNED consecutive rows are older than `since`.
       def walk_reels(user_id, since:, present:)
+        old = 0
         api.reels(user_id).each do |summary|
           pk = summary['pk'] or next
           next if present && Media.keys_for(pk).all? { present.call('reels', it) }
 
           row = api.media(pk) or next
+          old = since && Media.posted_at(row) < since ? old + 1 : 0
           yield row
+          break if old >= PINNED
         end
       rescue ApiError => e
         @log.warn("reels: #{e.message} -- continuing without it")

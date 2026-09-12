@@ -113,9 +113,11 @@ Both would key as `<pk>_<pk>`, so the thumbnail's media id carries a `_thumb`
 role and `Library::MEDIA_ID` matches it. OnlyFans media ids are all digits, so
 its keys and filenames are unchanged.
 
-`--since` cannot end the reels walk early: the listing carries no timestamp to
-compare, and the only row that has one is the row a request has already been
-spent on. The pages are walked to the end and `Session` drops what is too old.
+`--since` ends the reels walk only from a row a request has already been spent
+on, because the listing carries no timestamp to compare. The tab is newest
+first, so three reels in a row older than `--since` end it. Three is the number
+of reels an account can pin, and a pinned reel is listed first whatever its
+date.
 
 ## Enumeration and downloading run together
 
