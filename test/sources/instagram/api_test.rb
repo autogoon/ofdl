@@ -144,6 +144,41 @@ module OFDL
         assert_equal(1, client.forms.size)
       end
 
+      # One media, keyed by shortcode; see Api::POST_QUERY.
+      class FakePostClient
+        attr_reader :forms
+
+        def initialize(item)
+          @item = item
+          @forms = []
+        end
+
+        def post(_url, form, extra: {}, label: nil)
+          @forms << form
+          { 'data' => { 'xdt_api__v1__media__shortcode__web_info' => { 'items' => [@item].compact } } }
+        end
+      end
+
+      def test_one_media_is_read_by_shortcode
+        client = FakePostClient.new({ 'pk' => '10', 'taken_at' => 1_768_000_000 })
+        api = Instagram::Api.new(client:, tokens: FakeTokens.new)
+
+        assert_equal('10', api.media('SHORT')['pk'])
+        assert_equal('SHORT', JSON.parse(client.forms.first[:variables])['shortcode'])
+      end
+
+      # The query answers an empty list and an error without them; see
+      # Api::POST_QUERY.
+      def test_the_media_query_carries_the_two_flags_it_needs
+        client = FakePostClient.new(nil)
+        Instagram::Api.new(client:, tokens: FakeTokens.new).media('SHORT')
+
+        variables = JSON.parse(client.forms.first[:variables])
+
+        assert(variables['__relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider'])
+        assert_equal(false, variables['__relay_internal__pv__PolarisShortDramaEnabledrelayprovider'])
+      end
+
       # Answers the highlights tray with the collections given, each dated by
       # its newest story, and records which collections were then asked for.
       class FakeTrayClient

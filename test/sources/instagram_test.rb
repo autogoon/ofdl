@@ -20,7 +20,10 @@ module OFDL
 
         attr_accessor :follows, :friendship_rows
 
-        def reels(_user_id) = @reels.map { { 'pk' => it } }
+        # A listing row carries the pk the library keys on and the shortcode
+        # Api#media takes; here the shortcode is the pk with a prefix, so a
+        # test can tell the two apart.
+        def reels(_user_id) = @reels.map { { 'pk' => it, 'code' => "c#{it}" } }
 
         def following(_user_id) = Array(@follows)
 
@@ -32,7 +35,8 @@ module OFDL
 
         def stories(_user_id) = @stories
 
-        def media(media_id)
+        def media(code)
+          media_id = code.delete_prefix('c')
           @fetched << media_id
           return nil if @missing.include?(media_id)
 

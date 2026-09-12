@@ -109,8 +109,23 @@ module OFDL
         end
 
         # One reel or post in full, including the video and the timestamp the
-        # reels query leaves out.
-        def media(media_id) = @client.get("/media/#{media_id}/info/")['items']&.first
+        # reels query leaves out. Keyed by the shortcode a listing row carries
+        # as `code`, because `/media/<pk>/info/` answers 302 to the site root.
+        #
+        # The two provider flags are the ones the query refuses to run without:
+        # dropping either answers `items: []` and a missing_required_variable
+        # error, while the other three the web client sends make no difference.
+        POST_QUERY = { doc_id: '28499995702964365', name: 'PolarisPostRootQuery' }.freeze
+
+        def media(code)
+          variables = {
+            shortcode: code.to_s, fetch_tagged_user_count: nil, hoisted_comment_id: nil, hoisted_reply_id: nil,
+            __relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider: true,
+            __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: false
+          }
+          page = graphql(POST_QUERY, variables, label: "media #{code}")
+          page.dig('data', 'xdt_api__v1__media__shortcode__web_info', 'items')&.first
+        end
 
         # One request, no pagination: a story tray holds at most a day of media.
         def stories(user_id) = reel_items(user_id.to_s)

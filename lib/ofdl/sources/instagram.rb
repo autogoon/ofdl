@@ -144,18 +144,22 @@ module OFDL
       end
 
       # The reels listing carries each reel's thumbnail but neither its video
-      # nor its timestamp, so a reel needs a second request, to
-      # /media/<pk>/info/, before it can be downloaded. Under `--all` the info
-      # request is made only when a key is missing from the library, so a rerun
-      # over an archived account makes none. Under every other mode `present`
-      # answers false: a reel already on disk is what ends the walk, and
-      # Session never sees one the adapter has dropped; see Session#presence.
+      # nor its timestamp, so a reel needs a second request, to Api#media,
+      # before it can be downloaded. Under `--all` that request is made only
+      # when a key is missing from the library, so a rerun over an archived
+      # account makes none. Under every other mode `present` answers false: a
+      # reel already on disk is what ends the walk, and Session never sees one
+      # the adapter has dropped; see Session#presence.
+      #
+      # The listing gives both the pk the library keys on and the shortcode
+      # Api#media takes.
       def walk_reels(user_id, present:)
         api.reels(user_id).each do |summary|
           pk = summary['pk'] or next
+          code = summary['code'] or next
           next if present && Media.keys_for(pk).all? { present.call('reels', it) }
 
-          row = api.media(pk) or next
+          row = api.media(code) or next
           yield row
         end
       rescue ApiError => e
