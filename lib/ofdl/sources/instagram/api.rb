@@ -45,14 +45,6 @@ module OFDL
         # Whether the viewer follows one account, and whether it is private.
         def friendship(user_id) = @client.get("/friendships/show/#{user_id}/")
 
-        # The profile, including the id stories and highlights are keyed by.
-        def user(username)
-          page = @client.get("/feed/user/#{username}/username/", { count: 1 })
-          row = page['user'] or raise ApiError.new("no such account #{username.inspect}", path: username)
-
-          row
-        end
-
         # The grid, which Instagram serves only over GraphQL: `/feed/user/<id>/`
         # answers 302 to the site root for every account. The variables name the
         # account by username; every REST endpoint here takes the numeric id.

@@ -27,11 +27,15 @@ module OFDL
 
         def following(_user_id) = Array(@follows)
 
-        def user(username) = { 'pk' => "id-#{username}", 'username' => username }
-
         def friendship(user_id) = (@friendship_rows || {}).fetch(user_id, { 'following' => true })
 
-        def timeline(_username, since: nil) = @timeline
+        # A grid row names the account it belongs to, which is how #resolve
+        # learns an id. An account given no rows has an empty grid.
+        def timeline(username, since: nil)
+          return @timeline if @timeline.any?
+
+          [{ 'pk' => "p-#{username}", 'user' => { 'pk' => "id-#{username}" } }]
+        end
 
         def stories(_user_id) = @stories
 
@@ -159,6 +163,29 @@ module OFDL
         api.friendship_rows = { 'id-alice' => { 'following' => false, 'is_private' => false } }
 
         assert_equal({ source: 'instagram', id: 'id-alice', username: 'alice' }, source(api).resolve('alice'))
+      end
+
+      # An account with no posts has no grid row to name it, and the follow
+      # list holds the same id.
+      def test_a_creator_with_an_empty_grid_resolves_from_the_follow_list
+        api = FakeApi.new(timeline: [])
+        api.define_singleton_method(:timeline) { |_username, since: nil| [] }
+        api.follows = [{ 'pk' => '10', 'username' => 'Alice' }]
+        subject = source(api)
+        subject.define_singleton_method(:viewer_id) { '99' }
+
+        assert_equal({ source: 'instagram', id: '10', username: 'alice' }, subject.resolve('alice'))
+      end
+
+      def test_a_name_that_neither_the_grid_nor_the_follow_list_knows_is_an_error
+        api = FakeApi.new
+        api.define_singleton_method(:timeline) { |_username, since: nil| [] }
+        subject = source(api)
+        subject.define_singleton_method(:viewer_id) { '99' }
+
+        error = assert_raises(ConfigError) { subject.resolve('nobody') }
+
+        assert_match(/nobody/, error.message)
       end
 
       # Following is not what makes an account readable, so not following is

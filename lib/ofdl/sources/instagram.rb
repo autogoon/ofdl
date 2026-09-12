@@ -47,10 +47,17 @@ module OFDL
       # Any account, followed or not: Instagram shows a public account to
       # anyone, so following decides how much is visible rather than whether
       # anything is. #note_visibility says which case this is.
+      #
+      # The id comes from the grid, whose rows name the account they belong to,
+      # or from the follow list for an account whose grid is empty.
+      # `/feed/user/<name>/username/`, which answered this in one request,
+      # answers 302 to the site root; see Api::GRID_QUERY.
       def resolve(username)
-        row = api.user(username)
-        note_visibility(username, row['pk'])
-        { source: KEY, id: row['pk'], username: }
+        id = grid_id(username) || followed_id(username)
+        raise ConfigError, "instagram/#{username}: no such account, or nothing about it is readable" unless id
+
+        note_visibility(username, id)
+        { source: KEY, id:, username: }
       end
 
       def items_from(row, post_type:) = Media.from_row(row, post_type:)
@@ -112,6 +119,24 @@ module OFDL
       def api = @api ||= Api.new(client:, tokens:)
 
       private
+
+      # One request. An account with no posts answers with no rows and so no
+      # id, which is what sends #resolve to the follow list.
+      def grid_id(username)
+        api.timeline(username).first&.dig('user', 'pk')
+      rescue ApiError => e
+        @log.debug("#{username}: could not read the grid (#{e.message})")
+        nil
+      end
+
+      # The whole follow list, which costs a request per 25 accounts. Read only
+      # when the grid answered nothing.
+      def followed_id(username)
+        creators.find { it[:username].to_s.casecmp?(username.to_s) }&.fetch(:id)
+      rescue ApiError => e
+        @log.debug("#{username}: could not read the follow list (#{e.message})")
+        nil
+      end
 
       # One request, made only for a creator named on the command line: the
       # follow list needs no such check, because being on it is the answer.
