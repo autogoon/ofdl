@@ -198,7 +198,8 @@ one frame a second. In scratch a `stat()` costs a microsecond.
 
 The copy stages as `<name>.part` **in the destination directory** and renames it
 there. A rename within one filesystem is atomic, so a file sitting under its
-final name is always complete; see `Scratch#publish`.
+final name is always complete; see `Scratch#publish`. A `.part` left by a run
+killed mid-copy is deleted by the walk in `Library#tally`.
 
 Scratch is one directory per run, removed when the run ends and on Ctrl-C.
 

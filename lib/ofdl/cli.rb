@@ -221,7 +221,6 @@ module OFDL
       # paced API calls, and the screen stays blank until the dashboard starts.
       with_dashboard(options) do |dashboard|
         session.library.ensure_root!
-        session.library.sweep_partials!
         # Started here and left running. Scoping the walk needs only the names,
         # not the ids `resolve` looks up, so the walk can start before the
         # subscription lookup; the walk costs no request, so it overlaps that

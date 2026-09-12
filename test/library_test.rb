@@ -70,12 +70,17 @@ module OFDL
       refute(fresh.have?(subject, username: 'creator'))
     end
 
-    def test_sweep_removes_stale_partials
+    # Counting the library reads every directory, and deleting the partials
+    # needs the same listing; see Library#sweep_partials.
+    def test_the_walk_removes_stale_partials
       path = @library.prepare(item, username: 'creator')
+      path.write('whole')
       Pathname("#{path}.part").write('half')
 
-      assert_equal(1, @library.sweep_partials!)
+      files, = @library.tally
+
       refute_path_exists("#{path}.part")
+      assert_equal(1, files)
     end
 
     def test_usernames_with_separators_cannot_escape_the_root
