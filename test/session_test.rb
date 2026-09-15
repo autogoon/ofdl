@@ -193,6 +193,124 @@ module OFDL
       assert_empty(session.gaps)
     end
 
+    # Rows handed out one at a time, recording which the walk asked for, so a
+    # test can show it stopped rather than read the feed to its end.
+    def counting_feed(rows, read)
+      Enumerator.new do |yielder|
+        rows.each do |row|
+          read << row['id']
+          yielder << row
+        end
+      end
+    end
+
+    def dated_rows(ids, posted_at) = ids.map { row(it, it * 10, posted_at) }
+
+    def text_row(post_id) = { 'id' => post_id, 'postedAt' => '2026-01-14T00:00:00Z', 'media' => [] }
+
+    # A library holding the media ids given and nothing else.
+    def session_holding(media_ids, rows, read, post_type: 'posts')
+      session = session_with({ post_type => counting_feed(rows, read) })
+      library = FakeLibrary.new
+      library.define_singleton_method(:have?) { |item, username:| media_ids.include?(item.media_id) }
+      session.instance_variable_set(:@library, library)
+      session
+    end
+
+    # A feed is read newest first, so three rows already on disk mean the walk
+    # has reached what the last run took; see Session#count_idle.
+    def test_a_feed_stops_at_what_is_already_on_disk
+      read = []
+      session = session_holding([30, 40, 50, 60], dated_rows(1..6, '2026-01-14T00:00:00Z'), read)
+
+      items = collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice')
+
+      assert_equal([10, 20], items.map(&:media_id))
+      assert_equal([1, 2, 3, 4, 5], read)
+    end
+
+    def test_all_reads_the_feed_past_what_is_on_disk
+      read = []
+      session = session_holding([30, 40, 50], dated_rows(1..6, '2026-01-14T00:00:00Z'), read)
+
+      items = collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice', all: true)
+
+      assert_equal([10, 20, 60], items.map(&:media_id))
+      assert_equal([1, 2, 3, 4, 5, 6], read)
+    end
+
+    # Under `--since` a row already on disk does not end the feed; only a row
+    # older than the date does.
+    def test_since_reads_the_feed_past_what_is_on_disk
+      read = []
+      rows = dated_rows(1..4, '2026-01-14T00:00:00Z') + [row(5, 50, '2025-01-01T00:00:00Z')]
+      session = session_holding([10, 20, 30, 40], rows, read)
+
+      collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice', since: Time.utc(2026, 1, 1))
+
+      assert_equal([1, 2, 3, 4, 5], read)
+    end
+
+    def test_three_rows_older_than_since_stop_the_feed
+      read = []
+      rows = [row(1, 10, '2026-01-14T00:00:00Z')] + dated_rows(2..6, '2025-01-01T00:00:00Z')
+      session = session_holding([], rows, read)
+
+      collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice', since: Time.utc(2026, 1, 1))
+
+      assert_equal([1, 2, 3, 4], read)
+    end
+
+    # What a listing that dates its rows before fetching them is tested
+    # against; see Session#cutoff_for.
+    def cutoff(session, post_type, since: nil, all: false)
+      session.send(:cutoff_for, Source::ONLYFANS, 'alice', since:, all:).call(post_type)
+    end
+
+    def test_the_cutoff_is_the_date_given
+      session = scanning_session({})
+
+      assert_equal(Time.utc(2026, 1, 1), cutoff(session, 'highlights', since: Time.utc(2026, 1, 1)))
+    end
+
+    def test_the_cutoff_without_a_date_is_the_newest_file_held
+      session = scanning_session({})
+      session.library.define_singleton_method(:newest) { |source:, username:, post_type:| Time.utc(2026, 2, 3) }
+
+      assert_equal(Time.utc(2026, 2, 3), cutoff(session, 'highlights'))
+    end
+
+    def test_all_sets_no_cutoff
+      session = scanning_session({})
+
+      assert_nil(cutoff(session, 'highlights', all: true))
+    end
+
+    # Highlights page over collections rather than by date, so rows already on
+    # disk are no evidence of how far back the walk has reached.
+    def test_a_feed_that_is_not_read_newest_first_never_stops
+      read = []
+      rows = dated_rows(1..5, '2026-01-14T00:00:00Z')
+      session = session_holding([10, 20, 30, 40, 50], rows, read, post_type: 'highlights')
+
+      collect_from(session, user_id: 1, post_types: %w[highlights], username: 'alice')
+
+      assert_equal([1, 2, 3, 4, 5], read)
+    end
+
+    # The third row carries no media, so the walk reads a fourth row before it
+    # has three rows with nothing to do.
+    def test_a_row_without_media_counts_for_neither_side
+      read = []
+      rows = [row(1, 10, '2026-01-14T00:00:00Z'), row(2, 20, '2026-01-14T00:00:00Z'), text_row(3),
+              row(4, 40, '2026-01-14T00:00:00Z'), row(5, 50, '2026-01-14T00:00:00Z')]
+      session = session_holding([10, 20, 40, 50], rows, read)
+
+      collect_from(session, user_id: 1, post_types: %w[posts], username: 'alice')
+
+      assert_equal([1, 2, 3, 4], read)
+    end
+
     def test_deduplicates_across_post_types
       shared = row(1, 10, '2026-01-14T00:00:00Z')
       session = session_with({ 'posts' => [shared], 'paid' => [shared] })

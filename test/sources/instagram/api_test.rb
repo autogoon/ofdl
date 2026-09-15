@@ -85,6 +85,135 @@ module OFDL
         assert_equal('token', client.forms.first[:fb_dtsg])
         assert_equal(Instagram::Api::REELS_QUERY[:doc_id], client.forms.first[:doc_id])
       end
+
+      # Answers each POST with the next canned grid connection.
+      class FakeGridClient
+        attr_reader :forms, :labels
+
+        def initialize(pages)
+          @pages = pages
+          @forms = []
+          @labels = []
+        end
+
+        def post(_url, form, extra: {}, label: nil)
+          @forms << form
+          @labels << label
+          raise ApiError, 'ran past the canned pages' if @pages.empty?
+
+          { 'data' => { 'xdt_api__v1__feed__user_timeline_graphql_connection' => @pages.shift } }
+        end
+      end
+
+      def grid(pks, has_next: false, cursor: 'next', taken_at: 1_768_000_000)
+        { 'edges' => pks.map { { 'node' => { 'pk' => it, 'taken_at' => taken_at } } },
+          'page_info' => { 'has_next_page' => has_next, 'end_cursor' => cursor } }
+      end
+
+      def grid_api(pages)
+        client = FakeGridClient.new(pages)
+        [Instagram::Api.new(client:, tokens: FakeTokens.new), client]
+      end
+
+      # The grid is GraphQL, and its rows are the edges' nodes; see
+      # Api::GRID_QUERY.
+      def test_the_grid_yields_the_node_of_each_edge
+        api, = grid_api([grid(%w[10 20])])
+
+        assert_equal(%w[10 20], api.timeline('creator').map { it['pk'] })
+      end
+
+      def test_the_grid_query_names_the_creator_and_carries_the_cursor
+        api, client = grid_api([grid(%w[10], has_next: true, cursor: 'C1'), grid(%w[20])])
+        api.timeline('creator').to_a
+
+        first, last = client.forms.map { JSON.parse(it[:variables]) }
+
+        assert_equal('creator', first['username'])
+        assert_nil(first['after'])
+        assert_equal('C1', last['after'])
+        refute(last['data'].key?('after'), 'after must not be nested inside data')
+      end
+
+      # Newest first, so a page whose oldest row precedes `since` is the last
+      # one worth asking for.
+      def test_the_grid_walk_stops_at_a_page_older_than_since
+        api, client = grid_api([grid(%w[10], has_next: true, taken_at: 1_700_000_000)])
+
+        assert_equal(%w[10], api.timeline('creator', since: Time.at(1_760_000_000)).map { it['pk'] })
+        assert_equal(1, client.forms.size)
+      end
+
+      # One media, keyed by shortcode; see Api::POST_QUERY.
+      class FakePostClient
+        attr_reader :forms
+
+        def initialize(item)
+          @item = item
+          @forms = []
+        end
+
+        def post(_url, form, extra: {}, label: nil)
+          @forms << form
+          { 'data' => { 'xdt_api__v1__media__shortcode__web_info' => { 'items' => [@item].compact } } }
+        end
+      end
+
+      def test_one_media_is_read_by_shortcode
+        client = FakePostClient.new({ 'pk' => '10', 'taken_at' => 1_768_000_000 })
+        api = Instagram::Api.new(client:, tokens: FakeTokens.new)
+
+        assert_equal('10', api.media('SHORT')['pk'])
+        assert_equal('SHORT', JSON.parse(client.forms.first[:variables])['shortcode'])
+      end
+
+      # The query answers an empty list and an error without them; see
+      # Api::POST_QUERY.
+      def test_the_media_query_carries_the_two_flags_it_needs
+        client = FakePostClient.new(nil)
+        Instagram::Api.new(client:, tokens: FakeTokens.new).media('SHORT')
+
+        variables = JSON.parse(client.forms.first[:variables])
+
+        assert(variables['__relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider'])
+        assert_equal(false, variables['__relay_internal__pv__PolarisShortDramaEnabledrelayprovider'])
+      end
+
+      # Answers the highlights tray with the collections given, each dated by
+      # its newest story, and records which collections were then asked for.
+      class FakeTrayClient
+        attr_reader :asked
+
+        def initialize(tray) = (@tray = tray) && @asked = []
+
+        def get(path, params = {})
+          return { 'tray' => @tray.map { |id, at| { 'id' => id, 'latest_reel_media' => at } } } if path.include?('tray')
+
+          @asked << params[:reel_ids]
+          { 'reels' => { params[:reel_ids] => { 'items' => [{ 'pk' => params[:reel_ids] }] } } }
+        end
+      end
+
+      def tray_api(tray)
+        client = FakeTrayClient.new(tray)
+        [Instagram::Api.new(client:, tokens: FakeTokens.new), client]
+      end
+
+      def test_a_collection_with_nothing_newer_than_since_costs_no_request
+        api, client = tray_api([['a', 1_760_000_000], ['b', 1_700_000_000], ['c', 1_770_000_000]])
+
+        api.highlights(7, since: Time.at(1_750_000_000)).to_a
+
+        assert_equal(%w[a c], client.asked)
+      end
+
+      def test_every_collection_is_asked_for_without_a_date
+        api, client = tray_api([['a', 1_760_000_000], ['b', 1_700_000_000]])
+
+        api.highlights(7).to_a
+
+        assert_equal(%w[a b], client.asked)
+      end
     end
   end
 end

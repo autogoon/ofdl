@@ -18,6 +18,7 @@ module OFDL
       @root = Pathname(root)
       @log = log
       @keys = {}
+      @newest = {}
       @mutex = Mutex.new
     end
 
@@ -53,6 +54,19 @@ module OFDL
       end.include?(key)
     end
 
+    # The date of the newest file held for one creator's post type, or nil when
+    # the directory holds none. A filename leads with the date its media was
+    # posted (see Item#basename), so a listing answers this and no request is
+    # made. A listing that can name its rows' dates before fetching them uses
+    # it to skip the ones already held; see Sources::Instagram::Api#highlights.
+    def newest(source:, username:, post_type:)
+      dir = @root.join(source.to_s, sanitise(username), post_type.to_s)
+      @mutex.synchronize do
+        @newest[cache_key(source, username, post_type)] ||=
+          media_files(dir).filter_map { date_from(it.basename.to_s) }.max
+      end
+    end
+
     def size_of(item, username:)
       path_for(item, username:).size
     rescue SystemCallError
@@ -84,6 +98,7 @@ module OFDL
     def tally(only: nil, on_creator: nil, &progress)
       wanted = only&.to_set { walk_key(it[:source], it[:username]) }
       files = bytes = 0
+      @swept = 0
 
       creator_groups(wanted).each do |group|
         group.each do |creator|
@@ -94,6 +109,7 @@ module OFDL
         on_creator&.call(key_of(group.last))
       end
 
+      report_swept
       [files, bytes]
     end
 
@@ -117,21 +133,6 @@ module OFDL
       path = path_for(item, username:)
       path.dirname.mkpath
       path
-    end
-
-    # A `.part` left by an interrupted run is incomplete by definition. Removing
-    # them up front keeps "file exists" a reliable completion signal.
-    def sweep_partials!
-      partials = Pathname.glob(@root.join('**', '*.part*'))
-      return 0 if partials.empty?
-
-      partials.each do |path|
-        @log.debug("sweeping stale partial #{path}")
-        path.delete
-      end
-      noun = partials.size == 1 ? 'download' : 'downloads'
-      @log.warn("discarded #{partials.size} incomplete #{noun} from a previous run")
-      partials.size
     end
 
     def counts
@@ -205,7 +206,9 @@ module OFDL
       source = creator.parent.basename.to_s
 
       post_type_dirs(creator).each do |dir|
-        paths = media_files(dir)
+        children = dir.children
+        sweep_partials(children)
+        paths = media_from(children)
         cache(source, creator.basename.to_s, dir.basename.to_s) { key_set(paths) }
         paths.each do |path|
           size = path.extname == '.drm' ? 0 : path.size
@@ -225,9 +228,47 @@ module OFDL
     def media_files(dir)
       return [] unless dir.directory?
 
-      dir.children.reject do |path|
+      media_from(dir.children)
+    end
+
+    def media_from(children)
+      children.reject do |path|
         path.directory? || path.extname == '.part' || key_from(path.basename.to_s).nil?
       end
+    end
+
+    # A `.part` is a copy that never finished: a download reaches its final
+    # name by a rename within this directory; see Scratch#publish. Partials are
+    # deleted here, from the children #tally_creator has already listed, so
+    # that removing them reads no directory twice.
+    # Once per walk rather than once per file: a run killed during a copy
+    # leaves one partial, but a run killed with a pool of workers leaves one
+    # per worker.
+    def report_swept
+      return unless @swept.positive?
+
+      noun = @swept == 1 ? 'download' : 'downloads'
+      @log.warn("discarded #{@swept} incomplete #{noun} from a previous run")
+    end
+
+    def sweep_partials(children)
+      children.each do |path|
+        next unless path.extname == '.part'
+
+        @log.debug("sweeping stale partial #{path}")
+        path.delete
+        @swept += 1
+      rescue SystemCallError
+        nil
+      end
+    end
+
+    # "2026-01-14_1234_5678.mp4" yields 2026-01-14. A filename that does not
+    # lead with a date is not one this wrote.
+    def date_from(basename)
+      stamp = basename[/\A\d{4}-\d{2}-\d{2}/] or return nil
+
+      Time.new(*stamp.split('-').map(&:to_i))
     end
 
     def key_set(paths)

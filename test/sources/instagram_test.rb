@@ -20,19 +20,27 @@ module OFDL
 
         attr_accessor :follows, :friendship_rows
 
-        def reels(_user_id) = @reels.map { { 'pk' => it } }
+        # A listing row carries the pk the library keys on and the shortcode
+        # Api#media takes; here the shortcode is the pk with a prefix, so a
+        # test can tell the two apart.
+        def reels(_user_id) = @reels.map { { 'pk' => it, 'code' => "c#{it}" } }
 
         def following(_user_id) = Array(@follows)
 
-        def user(username) = { 'pk' => "id-#{username}", 'username' => username }
-
         def friendship(user_id) = (@friendship_rows || {}).fetch(user_id, { 'following' => true })
 
-        def timeline(_user_id, since: nil) = @timeline
+        # A grid row names the account it belongs to, which is how #resolve
+        # learns an id. An account given no rows has an empty grid.
+        def timeline(username, since: nil)
+          return @timeline if @timeline.any?
+
+          [{ 'pk' => "p-#{username}", 'user' => { 'pk' => "id-#{username}" } }]
+        end
 
         def stories(_user_id) = @stories
 
-        def media(media_id)
+        def media(code)
+          media_id = code.delete_prefix('c')
           @fetched << media_id
           return nil if @missing.include?(media_id)
 
@@ -56,9 +64,9 @@ module OFDL
         subject
       end
 
-      def rows(subject, post_types, present: nil)
+      def rows(subject, post_types, present: nil, username: 'creator')
         seen = []
-        subject.each_row(post_types, 7, present:) { |post_type, row| seen << [post_type, row['pk']] }
+        subject.each_row(post_types, 7, present:, username:) { |post_type, row| seen << [post_type, row['pk']] }
         seen
       end
 
@@ -114,6 +122,22 @@ module OFDL
         assert_equal(%w[10 20], api.fetched)
       end
 
+      # Session ends a feed by throwing, and each feed is caught on its own, so
+      # the reels tab stopping leaves the grid to be walked; see
+      # Session#count_idle.
+      def test_a_feed_that_session_stops_leaves_the_others_walked
+        api = FakeApi.new(reels: %w[10 20], timeline: [{ 'pk' => '30' }, { 'pk' => '40' }])
+        subject = source(api)
+        seen = []
+
+        subject.each_row(%w[posts reels], 7, username: 'creator') do |post_type, row|
+          seen << [post_type, row['pk']]
+          throw(:stop_feed) if post_type == 'posts'
+        end
+
+        assert_equal([%w[posts 30], %w[reels 10], %w[reels 20]], seen)
+      end
+
       # A reel deleted between the listing and the request returns nothing;
       # that is one reel lost, not the walk.
       def test_a_reel_that_cannot_be_read_is_skipped
@@ -139,6 +163,29 @@ module OFDL
         api.friendship_rows = { 'id-alice' => { 'following' => false, 'is_private' => false } }
 
         assert_equal({ source: 'instagram', id: 'id-alice', username: 'alice' }, source(api).resolve('alice'))
+      end
+
+      # An account with no posts has no grid row to name it, and the follow
+      # list holds the same id.
+      def test_a_creator_with_an_empty_grid_resolves_from_the_follow_list
+        api = FakeApi.new(timeline: [])
+        api.define_singleton_method(:timeline) { |_username, since: nil| [] }
+        api.follows = [{ 'pk' => '10', 'username' => 'Alice' }]
+        subject = source(api)
+        subject.define_singleton_method(:viewer_id) { '99' }
+
+        assert_equal({ source: 'instagram', id: '10', username: 'alice' }, subject.resolve('alice'))
+      end
+
+      def test_a_name_that_neither_the_grid_nor_the_follow_list_knows_is_an_error
+        api = FakeApi.new
+        api.define_singleton_method(:timeline) { |_username, since: nil| [] }
+        subject = source(api)
+        subject.define_singleton_method(:viewer_id) { '99' }
+
+        error = assert_raises(ConfigError) { subject.resolve('nobody') }
+
+        assert_match(/nobody/, error.message)
       end
 
       # Following is not what makes an account readable, so not following is

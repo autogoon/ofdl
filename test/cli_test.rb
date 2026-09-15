@@ -90,6 +90,22 @@ module OFDL
       assert_match(/onlyfans/, error.message)
     end
 
+    def test_all_and_since_together_are_an_error
+      options = { all: true, since: Time.utc(2026, 1, 1) }
+
+      error = assert_raises(ConfigError) { CLI.new.send(:validate!, options) }
+
+      assert_match(/--all or --since/, error.message)
+    end
+
+    def test_an_unknown_post_type_is_an_error
+      options = { post_types: %w[posts nonsense] }
+
+      error = assert_raises(ConfigError) { CLI.new.send(:validate!, options) }
+
+      assert_match(/nonsense/, error.message)
+    end
+
     def test_help_is_advertised
       assert_match(/-h, --help/, usage)
     end

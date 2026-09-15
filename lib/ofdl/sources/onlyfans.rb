@@ -56,17 +56,30 @@ module OFDL
       # Posts that advertise another creator; see Advert.
       def advert_reason(row, creator:) = Advert.reason(row, creator:)
 
+      # The feeds read newest first, and so the ones a run can stop part way
+      # through; see Session#count_idle. Stories and highlights are not among
+      # them: a highlight tray pages over collections by recency while the
+      # stories inside one collection carry their own dates.
+      ORDERED = %w[posts archived messages paid].freeze
+
+      def ordered?(post_type) = ORDERED.include?(post_type)
+
       # Every row of every feed asked for, each tagged with the post type it
       # was read under. One feed per post type here; an app whose one listing
       # carries several post types yields them interleaved instead.
       #
       # `present` goes unused: an OnlyFans row arrives with its media's URLs in
-      # it, so no request is deferred until the library has been consulted.
+      # it, so no request is deferred until the library has been consulted. So
+      # does `cutoff`: the only listing that could use one is highlights, and
+      # its rows carry `createdAt`, the date the collection was made rather
+      # than the date of the newest story in it -- a collection made in 2023
+      # can hold a story from today.
       #
-      # A feed that raises is skipped; the remaining feeds are still read.
-      def each_row(post_types, user_id, since: nil, present: nil)
+      # A feed that raises is skipped; the remaining feeds are still read, and
+      # so is a feed Session ends early; see Session#count_idle.
+      def each_row(post_types, user_id, since: nil, cutoff: nil, present: nil, username: nil)
         post_types.each do |post_type|
-          feed(post_type, user_id, since:).each { yield post_type, it }
+          catch(:stop_feed) { feed(post_type, user_id, since:).each { yield post_type, it } }
         rescue ApiError => e
           @log.warn("#{post_type}: #{e.message} -- continuing without it")
         end

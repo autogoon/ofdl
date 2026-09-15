@@ -45,29 +45,28 @@ module OFDL
         # Whether the viewer follows one account, and whether it is private.
         def friendship(user_id) = @client.get("/friendships/show/#{user_id}/")
 
-        # The profile, including the id stories and highlights are keyed by.
-        def user(username)
-          page = @client.get("/feed/user/#{username}/username/", { count: 1 })
-          row = page['user'] or raise ApiError.new("no such account #{username.inspect}", path: username)
-
-          row
-        end
+        # The grid, which Instagram serves only over GraphQL: `/feed/user/<id>/`
+        # answers 302 to the site root for every account. The variables name the
+        # account by username; every REST endpoint here takes the numeric id.
+        GRID_QUERY = { doc_id: '27954396937596316',
+                       name: 'PolarisProfilePostsTabContentQuery_connection' }.freeze
 
         # Newest first, so a page whose oldest row precedes `since` is the last
         # one worth asking for; see Api#exhausted?.
-        def timeline(user_id, since: nil)
+        def timeline(username, since: nil)
           Enumerator.new do |yielder|
             cursor = nil
+            number = 0
             loop do
-              params = { count: PAGE }
-              params[:max_id] = cursor if cursor
-              page = @client.get("/feed/user/#{user_id}/", params)
-              rows = Array(page['items'])
+              number += 1
+              page = grid_page(username, cursor, number)
+              rows = Array(page['edges']).filter_map { it['node'] }
               rows.each { yielder << it }
-              break if exhausted?(rows, since)
 
-              cursor = page['next_max_id'].to_s
-              break unless page['more_available'] && !cursor.empty?
+              info = page['page_info'] || {}
+              cursor = info['end_cursor']
+              break if rows.empty? || exhausted?(rows, since)
+              break unless info['has_next_page'] && cursor
             end
           end
         end
@@ -102,17 +101,40 @@ module OFDL
         end
 
         # One reel or post in full, including the video and the timestamp the
-        # reels query leaves out.
-        def media(media_id) = @client.get("/media/#{media_id}/info/")['items']&.first
+        # reels query leaves out. Keyed by the shortcode a listing row carries
+        # as `code`, because `/media/<pk>/info/` answers 302 to the site root.
+        #
+        # The two provider flags are the ones the query refuses to run without:
+        # dropping either answers `items: []` and a missing_required_variable
+        # error, while the other three the web client sends make no difference.
+        POST_QUERY = { doc_id: '28499995702964365', name: 'PolarisPostRootQuery' }.freeze
+
+        def media(code)
+          variables = {
+            shortcode: code.to_s, fetch_tagged_user_count: nil, hoisted_comment_id: nil, hoisted_reply_id: nil,
+            __relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider: true,
+            __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: false
+          }
+          page = graphql(POST_QUERY, variables, label: "media #{code}")
+          page.dig('data', 'xdt_api__v1__media__shortcode__web_info', 'items')&.first
+        end
 
         # One request, no pagination: a story tray holds at most a day of media.
         def stories(user_id) = reel_items(user_id.to_s)
 
         # The tray names the collections; each one's media is a second request.
-        def highlights(user_id)
+        #
+        # A tray entry carries `latest_reel_media`, the date of the newest story
+        # in that collection, so a collection holding nothing newer than `since`
+        # is skipped without the request. The tray is not in date order -- a
+        # creator arranges it -- so each entry is tested rather than the walk
+        # ended; see Session#cutoff_for for where the date comes from.
+        def highlights(user_id, since: nil)
           Enumerator.new do |yielder|
             tray = @client.get("/highlights/#{user_id}/highlights_tray/")
             Array(tray['tray']).each do |collection|
+              next if since && Time.at(collection['latest_reel_media'].to_i) < since
+
               reel_items(collection['id']).each { yielder << it }
             end
           end
@@ -133,6 +155,24 @@ module OFDL
         end
 
         private
+
+        # `after` goes at the top level of the variables, not inside `data`, as
+        # in #reels_page. The three `__relay_internal__pv__` flags carry the
+        # values the web client sends: multi-caption carousels on, the
+        # reels-reco debug overlay and short drama off.
+        def grid_page(username, cursor, number)
+          variables = {
+            after: cursor, before: nil, last: nil, first: PAGE,
+            data: { count: PAGE, include_reel_media_seen_timestamp: true, include_relationship_info: true,
+                    latest_besties_reel_media: true, latest_reel_media: true },
+            include_multi_captions: true, username: username.to_s,
+            __relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider: true,
+            __relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider: false,
+            __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: false
+          }
+          page = graphql(GRID_QUERY, variables, label: "grid page #{number}")
+          page.dig('data', 'xdt_api__v1__feed__user_timeline_graphql_connection') || {}
+        end
 
         # `after` sits beside `data`, not inside it. Inside, the endpoint
         # ignores it and answers every request with the first page, and the

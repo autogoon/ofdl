@@ -72,6 +72,7 @@ An adapter answers:
 | `creators`                      | targets to archive with no name given             |
 | `resolve(username)`             | one target                                        |
 | `each_row(post_types, id, ...)` | yields `[post_type, row]`                         |
+| `ordered?(post_type)`           | whether that feed is read newest first            |
 | `items_from(row, post_type:)`   | `Item`s                                           |
 | `advert_reason(row, creator:)`  | why a post is an advert, or nil                   |
 | `status_lines`                  | yields the label/value pairs `ofdl status` prints |
@@ -85,6 +86,26 @@ for.
 actually has is that app's own list, and `Session#stream` walks the two
 intersected — so naming a post type only one app carries selects it there and is
 absent on the other rather than failing the run.
+
+### Ordered and unordered feeds
+
+`ordered?` answers whether a post type's feed is read newest first. Such a feed
+can be stopped part way: `Session#count_idle` counts the rows with nothing left
+to do and throws `:stop_feed`, which each adapter catches around one feed so the
+remaining feeds are still read. `Sources::OnlyFans::ORDERED` and
+`Sources::Instagram::ORDERED` name those feeds, and `Session#idle_verdicts` sets
+what `--since` and `--all` count. Where `Session::STOP_AFTER` such rows run
+together part way down a feed, everything older goes unread until a run under
+`--since` or `--all`.
+
+Stories and highlights are in neither list, because the position of a collection
+in a tray does not order the dates of the stories inside it. A story tray is one
+request; a highlight tray is one request per collection. Where the tray dates a
+collection before it is fetched, that collection's request is skipped:
+`Sources::Instagram::Api#highlights` tests `latest_reel_media` against the date
+`Session#cutoff_for` gives it. OnlyFans' highlights carry `createdAt`, the date
+the collection was made rather than the date of its newest story, so a
+collection there is fetched whatever its stories' dates.
 
 ### Instagram
 
@@ -104,84 +125,48 @@ returning a fresh cursor and `has_next_page` true.
 
 The reels listing carries each reel's thumbnail but neither its video nor its
 timestamp, so a downloadable reel costs a second request to `/media/<pk>/info/`.
-`Library#key?` answers presence from a key alone, `Session` passes that as
-`present` into `each_row`, and `walk_reels` asks before it fetches: a rerun over
-an archived account spends one request on the listing and none on the reels.
+Under `--all`, `Library#key?` answers presence from a key alone, `Session`
+passes that as `present` into `each_row`, and `walk_reels` asks before it
+fetches: a rerun over an archived account spends one request on the listing and
+none on the reels. Under every other mode `present` answers false, because a
+reel already on disk is what ends the walk and `Session` never sees one the
+adapter has dropped.
 
 A reel therefore produces two items from one row, the video and its thumbnail.
 Both would key as `<pk>_<pk>`, so the thumbnail's media id carries a `_thumb`
 role and `Library::MEDIA_ID` matches it. OnlyFans media ids are all digits, so
 its keys and filenames are unchanged.
 
-`--since` cannot end the reels walk early: the listing carries no timestamp to
-compare, and the only row that has one is the row a request has already been
-spent on. The pages are walked to the end and `Session` drops what is too old.
+A reel's date arrives only with the `/media/<pk>/info/` row, so under `--since`
+the reels tab reaches the stop rule above one request later than a feed whose
+listing carries dates.
 
 ## Enumeration and downloading run together
 
-Listing is the slow half. It's paced at a couple of requests a second and a
-large timeline runs to hundreds of pages, so walking every post type to the end
-before fetching anything would waste most of the run. Instead the producer
-pushes each item onto a bounded queue and the download pool takes from it, and
-the first file lands while the second page is still being listed.
+Listing is slower than downloading: it is paced by `requests_per_second`, and a
+large timeline runs to hundreds of pages. So `Session#produce` pushes each item
+onto a bounded queue as it lists, and a pool of workers takes from it; the first
+file is written while the second page is still being listed. `QUEUE_DEPTH` in
+`Session` bounds the queue for backpressure rather than capacity.
 
-There's one queue and one pool for the whole run, not one per creator. That
-means the producer crosses a creator boundary without waiting for that creator's
-downloads to finish, so a worker can be fetching for a creator the producer has
-already moved past. That's why the username travels on the queue next to its
-item, and why every log line and panel row names its creator.
+One queue and one pool serve the whole run, not one per creator, so a worker can
+be fetching for a creator the producer has already finished listing. Each item
+is queued with its creator's username, and every log line and panel row names
+that creator.
 
-`QUEUE_DEPTH` in `Session` bounds the queue at 256, and the bound is there for
-backpressure, not capacity. The producer is paced only by `requests_per_second`
-and yields a page at a time, so with an unbounded queue the producer would run
-to the end of every post type while the pool was still draining the first pages.
-Memory would scale with the size of the library instead of with concurrency, and
-`queued` would show the whole timeline rather than what's actually waiting.
+The producer decides what becomes of an item before queueing it.
+`Session#verdict_for` returns `:old`, `:duplicate`, `:present`, `:advert` or
+`:queued`, and both the counters and the panel follow from that answer. The
+producer runs the deduplication and the on-disk test for the same reason: a
+worker running them instead would leave `queued` counting work no worker will
+do.
 
-The bound also caps the listing a run does that it never uses. Once the queue is
-full the producer blocks, so a run stopped with Ctrl-C has listed at most 256
-items beyond what it downloaded, rather than every post type to the end. Those
-unmade requests are a saving only for a run that doesn't finish — a completed
-run lists exactly the same pages either way.
+`on disk` is counted by a third thread. `Session#count_library` reads the output
+tree while the listing runs, and `Watermark` blocks the producer until the count
+has finished a creator's directory, so no file is counted both as `on_disk` by
+the count and as `downloaded` by a worker.
 
-The bound doesn't slow the request rate down. Every API call goes through one
-`RateLimiter` on the `Client`, so `requests_per_second` sets the request rate an
-app sees. The queue bound sets only how far ahead of the downloads the listing
-is allowed to get.
-
-The producer also does the deduplication — the same media often appears in both
-a timeline and the paid feed, and the first sighting wins — and the check for
-what is already on disk. Both have to happen there: `queued` should only count
-work that will actually be done, or a re-run puts the entire library through the
-queue.
-
-`Session#verdict_for` applies those tests in one order and returns what became
-of the item: `:old`, `:duplicate`, `:present`, `:advert` or `:queued`. The
-counters and the panel both read that answer. The advert test is `Advert`, which
-reads the post text; `Advert.reason` runs once per row rather than once per
-item, and only when `skip_ads` is set.
-
-The panel's `on disk` is not counted by the producer. `Session#count_library`
-walks the output tree on its own thread, started before the subscriptions are
-resolved. The walk covers the creators named on the command line, or the whole
-tree when no names were given. The producer's wait is a position in an ordered
-walk, so an unscoped walk makes a run naming one creator wait for every
-directory that sorts before that creator's; scoping the walk to that creator
-removes the wait.
-
-`Watermark` is what makes running that walk alongside the listing safe.
-`Library#tally` walks creators in `<source>/<creator>` order and reports each
-one as it finishes; `Session#produce` orders its targets by the same key and
-waits for the walk to pass a creator before listing it. So no worker writes into
-a directory the walk has still to read, which would count that file twice — once
-in the walk and once as `downloaded`. The wait is almost always already
-satisfied: the walk is filesystem-bound, and the listing it races is paced at a
-couple of requests a second. A creator with no directory yet needs no special
-case, because the walk is ordered: a name it has gone past without reporting is
-a name it does not hold.
-
-There's no "N items to download" headline, because nothing knows the total until
-the last page has been listed.
+No total is printed, because none is known until the last page has been listed.
 
 ## output_dir is never created
 
@@ -213,7 +198,8 @@ one frame a second. In scratch a `stat()` costs a microsecond.
 
 The copy stages as `<name>.part` **in the destination directory** and renames it
 there. A rename within one filesystem is atomic, so a file sitting under its
-final name is always complete; see `Scratch#publish`.
+final name is always complete; see `Scratch#publish`. A `.part` left by a run
+killed mid-copy is deleted by the walk in `Library#tally`.
 
 Scratch is one directory per run, removed when the run ends and on Ctrl-C.
 
