@@ -18,6 +18,13 @@ module OFDL
       assert_match(%r{request:   → /api/v1/users/1/info/$}, file.string)
     end
 
+    def test_colour_in_a_message_is_left_out_of_the_file
+      file = StringIO.new
+      Logging.new(io: StringIO.new, level: :info, colour: true, file:).info("✓ \e[34msomeone\e[0m/avatar")
+
+      assert_match(%r{info: ✓ someone/avatar$}, file.string)
+    end
+
     def test_the_dashboard_sink_does_not_take_the_file_lines
       file = StringIO.new
       log = Logging.new(io: StringIO.new, level: :info, colour: false, file:)

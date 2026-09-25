@@ -70,11 +70,16 @@ module OFDL
     UNLABELLED = %i[info request].freeze
     private_constant :UNLABELLED
 
+    # Some callers build colour into the message itself, so it is stripped
+    # here as well as left out of the prefix.
+    ESCAPE = /\e\[[0-9;?]*[A-Za-z]/
+    private_constant :ESCAPE
+
     def record(level, message)
       return unless @file
 
       stamp = Time.now.strftime('%H:%M:%S.%L')
-      @mutex.synchronize { @file.puts("#{stamp} #{level}: #{message}") }
+      @mutex.synchronize { @file.puts("#{stamp} #{level}: #{message.to_s.gsub(ESCAPE, '')}") }
     end
 
     def write(level, message)
