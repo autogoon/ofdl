@@ -179,6 +179,20 @@ module OFDL
       assert_match(/HTTP 401/, error.message)
     end
 
+    # see Client#handle
+    def test_an_empty_bodied_rejection_names_its_status_headers
+      rejected = Transport::Response.new(
+        status: 302, content_type: nil, body: '',
+        headers: { 'location' => '/challenge/', 'x-ratelimit-remaining' => '0', 'vary' => 'Cookie' }
+      )
+      client = Client.new(jar:, transport: FakeTransport.new([rejected]),
+                          rate_limiter: RateLimiter.new(1000), log: silent_log)
+
+      error = assert_raises(ApiError) { client.get('/users/me') }
+
+      assert_equal('HTTP 302 [location: /challenge/] [x-ratelimit-remaining: 0]', error.message)
+    end
+
     def test_refresh_happens_at_most_once_across_calls
       refreshes = 0
       client, = build([response(403), response(200), response(403), response(200)],

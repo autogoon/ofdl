@@ -141,10 +141,24 @@ module OFDL
     # OnlyFans returns a reason in the response body -- {"error":{"code":..,
     # "message":".."}} -- so a status code alone discards the only useful
     # diagnostic.
+    #
+    # A 302 or 429 comes back with an empty body; what it carries is in its
+    # headers. set-cookie is left out of the log because it holds session
+    # values.
     def handle(response, path)
       return parse(response, path) if response.success?
 
-      raise ApiError.new("HTTP #{response.status}#{detail(response)}", status: response.status, path:)
+      @log.debug do
+        shown = response.headers.except('set-cookie')
+        "HTTP #{response.status} #{path}\n#{shown.map { |k, v| "  #{k}: #{v}" }.join("\n")}"
+      end
+      raise ApiError.new("HTTP #{response.status}#{status_headers(response)}#{detail(response)}",
+                         status: response.status, path:)
+    end
+
+    def status_headers(response)
+      shown = response.headers.select { |name, _| name.match?(/\A(location|retry-after)\z|rate-?limit/) }
+      shown.map { |k, v| " [#{k}: #{v}]" }.join
     end
 
     def detail(response)
