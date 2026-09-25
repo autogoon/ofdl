@@ -179,6 +179,38 @@ module OFDL
         assert_equal(false, variables['__relay_internal__pv__PolarisShortDramaEnabledrelayprovider'])
       end
 
+      # Answers the profile query with the user row given; see Api::PROFILE_QUERY.
+      class FakeProfileClient
+        attr_reader :forms
+
+        def initialize(user)
+          @user = user
+          @forms = []
+        end
+
+        def post(_url, form, extra: {}, label: nil)
+          @forms << form
+          { 'data' => { 'user' => @user } }
+        end
+      end
+
+      PIC = 'https://cdn.example.com/v/t51.2885-19/111111111_22222222222222222_3333333333333333333_n.jpg'
+
+      def test_the_avatar_is_keyed_on_the_middle_number_of_its_filename
+        client = FakeProfileClient.new({ 'hd_profile_pic_url_info' => { 'url' => "#{PIC}?stp=x" } })
+        rows = Instagram::Api.new(client:, tokens: FakeTokens.new).avatar(7)
+
+        assert_equal('22222222222222222', rows.first['pk'])
+        assert_equal("#{PIC}?stp=x", rows.first.dig('image_versions2', 'candidates', 0, 'url'))
+        assert_equal('7', JSON.parse(client.forms.first[:variables])['id'])
+      end
+
+      def test_no_avatar_without_a_picture_url
+        client = FakeProfileClient.new({})
+
+        assert_empty(Instagram::Api.new(client:, tokens: FakeTokens.new).avatar(7))
+      end
+
       # Answers the highlights tray with the collections given, each dated by
       # its newest story, and records which collections were then asked for.
       class FakeTrayClient

@@ -5,8 +5,9 @@ module OFDL
     class Instagram
       # Pagination over Instagram's private web API.
       #
-      # Every endpoint but #reels takes the cookies and `x-ig-app-id` alone.
-      # #reels is GraphQL and needs `fb_dtsg` as well; see Tokens.
+      # The REST endpoints take the cookies and `x-ig-app-id` alone. The
+      # GraphQL ones -- #timeline, #reels, #media and #avatar -- need `fb_dtsg`
+      # as well; see Tokens.
       #
       # A name is turned into an id once, by #user, because stories, highlights
       # and the profile picture are all keyed by the numeric id.
@@ -140,15 +141,29 @@ module OFDL
           end
         end
 
+        # The profile page's own query: `/users/<id>/info/` answers 429 to every
+        # request. The five provider flags carry the values the web client
+        # sends.
+        PROFILE_QUERY = { doc_id: '28036671149327607', name: 'PolarisProfilePageContentQuery' }.freeze
+
         # The profile picture, as a row shaped like a media row so it flattens
-        # the same way. `profile_pic_id` is "<media>_<user>", and the media half
-        # changes when the picture does, which is what makes a new one a new
-        # file rather than the same key.
+        # the same way.
+        #
+        # The query returns no `profile_pic_id`, so the key is the middle
+        # number of the CDN filename, "<n>_<n>_<n>_n.jpg".
         def avatar(user_id)
-          row = @client.get("/users/#{user_id}/info/")['user'] || {}
+          variables = {
+            id: user_id.to_s, render_surface: 'PROFILE',
+            __relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider: false,
+            __relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider: true,
+            __relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider: true,
+            __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: false,
+            __relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider: false
+          }
+          row = graphql(PROFILE_QUERY, variables, label: 'profile').dig('data', 'user') || {}
           url = row.dig('hd_profile_pic_url_info', 'url') || row['profile_pic_url']
-          pk = row['profile_pic_id'].to_s[/\A\d+/]
-          return [] unless url && pk
+          pk = url && URI(url).path.split('/').last.split('_')[1]
+          return [] unless pk&.match?(/\A\d+\z/)
 
           [{ 'pk' => pk, 'media_type' => Media::PHOTO, 'product_type' => 'avatar',
              'image_versions2' => { 'candidates' => [{ 'url' => url, 'width' => 1 }] } }]
