@@ -184,10 +184,16 @@ module OFDL
 
     # Open for the whole run, and written through as each line is logged, so
     # the file is complete up to an interrupt.
+    #
+    # 0600: the file holds live session cookies. The creation mode covers a new
+    # file; the chmod covers one that already exists.
     def log_file(path)
       return unless path
 
-      File.new(path, 'w').tap { it.sync = true }
+      File.new(path, 'w', 0o600).tap do |file|
+        file.chmod(0o600)
+        file.sync = true
+      end
     rescue SystemCallError => e
       raise ConfigError, "--log: #{e.message}"
     end

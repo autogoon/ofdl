@@ -31,6 +31,17 @@ module OFDL
       assert_equal('run.log', global[:log])
     end
 
+    def test_the_log_file_is_readable_only_by_its_owner
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, 'run.log')
+        File.write(path, '')
+        File.chmod(0o644, path)
+        CLI.new.send(:log_file, path).close
+
+        assert_equal(0o600, File.stat(path).mode & 0o777)
+      end
+    end
+
     def test_log_without_a_file_is_an_error
       assert_raises(ConfigError) { absorb(['alice', '--log']) }
     end
