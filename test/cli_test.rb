@@ -19,6 +19,33 @@ module OFDL
       assert(global[:verbose])
     end
 
+    def test_log_after_the_subcommand_in_either_form
+      rest, global = absorb(['alice', '--log', 'run.log'])
+
+      assert_equal(['alice'], rest)
+      assert_equal('run.log', global[:log])
+
+      rest, global = absorb(['--log=run.log', 'alice'])
+
+      assert_equal(['alice'], rest)
+      assert_equal('run.log', global[:log])
+    end
+
+    def test_the_log_file_is_readable_only_by_its_owner
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, 'run.log')
+        File.write(path, '')
+        File.chmod(0o644, path)
+        CLI.new.send(:log_file, path).close
+
+        assert_equal(0o600, File.stat(path).mode & 0o777)
+      end
+    end
+
+    def test_log_without_a_file_is_an_error
+      assert_raises(ConfigError) { absorb(['alice', '--log']) }
+    end
+
     def test_leaves_subcommand_options_alone
       rest, global = absorb(['--post-types', 'posts', '--since', '2026-01-01'])
 

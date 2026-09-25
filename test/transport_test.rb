@@ -70,6 +70,25 @@ module OFDL
       refute_predicate(error, :retryable?)
     end
 
+    def test_parses_the_last_header_block
+      dump = "HTTP/2 100\r\n\r\nHTTP/2 429\r\nRetry-After: 30\r\nVary: Accept\r\nvary: Cookie\r\n\r\n"
+
+      assert_equal({ 'retry-after' => '30', 'vary' => 'Accept, Cookie' },
+                   Transport::CurlImpersonate.parse_headers(dump))
+    end
+
+    def test_a_response_carries_the_dumped_headers
+      transport = curl
+      transport.define_singleton_method(:run) do |argv|
+        File.write(argv[argv.index('--dump-header') + 1], "HTTP/2 302\r\nlocation: /accounts/login/\r\n\r\n")
+        [+'302 text/html', +'', Struct.new(:success?, :exitstatus).new(true, 0)]
+      end
+
+      response = transport.get('https://www.example.com/api/', {})
+
+      assert_equal('/accounts/login/', response.headers['location'])
+    end
+
     def test_a_missing_binary_explains_how_to_install_it
       error = assert_raises(ConfigError) do
         Transport::CurlImpersonate.newest_chrome(binary: 'curl-impersonate-nope', log: silent_log)

@@ -5,8 +5,9 @@ module OFDL
     class Instagram
       # Pagination over Instagram's private web API.
       #
-      # Every endpoint but #reels takes the cookies and `x-ig-app-id` alone.
-      # #reels is GraphQL and needs `fb_dtsg` as well; see Tokens.
+      # The REST endpoints take the cookies and `x-ig-app-id` alone. The
+      # GraphQL ones -- #timeline, #reels, #media, #avatar and the tray in
+      # #highlights -- need `fb_dtsg` as well; see Tokens.
       #
       # A name is turned into an id once, by #user, because stories, highlights
       # and the profile picture are all keyed by the numeric id.
@@ -122,33 +123,70 @@ module OFDL
         # One request, no pagination: a story tray holds at most a day of media.
         def stories(user_id) = reel_items(user_id.to_s)
 
-        # The tray names the collections; each one's media is a second request.
-        #
-        # A tray entry carries `latest_reel_media`, the date of the newest story
-        # in that collection, so a collection holding nothing newer than `since`
-        # is skipped without the request. The tray is not in date order -- a
-        # creator arranges it -- so each entry is tested rather than the walk
-        # ended; see Session#cutoff_for for where the date comes from.
+        # The tray over GraphQL, because `/highlights/<id>/highlights_tray/`
+        # answers 302 to the site root. It names the collections and no dates.
+        HIGHLIGHTS_QUERY = { doc_id: '38168009559465141',
+                             name: 'ProfileStoryHighlightsTrayContentQuery_connection' }.freeze
+
+        # `/feed/reels_media/` answers 400 "Too many reels requested" to 28
+        # reel ids or more.
+        REELS_PER_REQUEST = 20
+
+        # Each tray page is one `reels_media` request for all of its
+        # collections. A reel there carries `latest_reel_media`, the date of
+        # its newest story, so a collection holding nothing newer than `since`
+        # yields nothing. The tray is not in date order -- a creator arranges
+        # it -- so each collection is tested rather than the walk ended; see
+        # Session#cutoff_for for where the date comes from.
         def highlights(user_id, since: nil)
           Enumerator.new do |yielder|
-            tray = @client.get("/highlights/#{user_id}/highlights_tray/")
-            Array(tray['tray']).each do |collection|
-              next if since && Time.at(collection['latest_reel_media'].to_i) < since
+            cursor = nil
+            loop do
+              variables = { user_id: user_id.to_s, first: REELS_PER_REQUEST }
+              variables[:after] = cursor if cursor
+              page = graphql(HIGHLIGHTS_QUERY, variables, label: 'highlights tray')
+              tray = page.dig('data', 'highlights') || {}
+              ids = Array(tray['edges']).filter_map { it.dig('node', 'id') }
+              break if ids.empty?
 
-              reel_items(collection['id']).each { yielder << it }
+              reels = @client.get('/feed/reels_media/', { reel_ids: ids.join(',') })['reels'] || {}
+              ids.each do |id|
+                reel = reels[id] or next
+                next if since && Time.at(reel['latest_reel_media'].to_i) < since
+
+                Array(reel['items']).each { yielder << it }
+              end
+
+              info = tray['page_info'] || {}
+              cursor = info['end_cursor']
+              break unless info['has_next_page'] && cursor
             end
           end
         end
 
+        # The profile page's own query: `/users/<id>/info/` answers 429 to every
+        # request. The five provider flags carry the values the web client
+        # sends.
+        PROFILE_QUERY = { doc_id: '28036671149327607', name: 'PolarisProfilePageContentQuery' }.freeze
+
         # The profile picture, as a row shaped like a media row so it flattens
-        # the same way. `profile_pic_id` is "<media>_<user>", and the media half
-        # changes when the picture does, which is what makes a new one a new
-        # file rather than the same key.
+        # the same way.
+        #
+        # The query returns no `profile_pic_id`, so the key is the middle
+        # number of the CDN filename, "<n>_<n>_<n>_n.jpg".
         def avatar(user_id)
-          row = @client.get("/users/#{user_id}/info/")['user'] || {}
+          variables = {
+            id: user_id.to_s, render_surface: 'PROFILE',
+            __relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider: false,
+            __relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider: true,
+            __relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider: true,
+            __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: false,
+            __relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider: false
+          }
+          row = graphql(PROFILE_QUERY, variables, label: 'profile').dig('data', 'user') || {}
           url = row.dig('hd_profile_pic_url_info', 'url') || row['profile_pic_url']
-          pk = row['profile_pic_id'].to_s[/\A\d+/]
-          return [] unless url && pk
+          pk = url && URI(url).path.split('/').last.split('_')[1]
+          return [] unless pk&.match?(/\A\d+\z/)
 
           [{ 'pk' => pk, 'media_type' => Media::PHOTO, 'product_type' => 'avatar',
              'image_versions2' => { 'candidates' => [{ 'url' => url, 'width' => 1 }] } }]

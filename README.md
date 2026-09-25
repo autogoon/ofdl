@@ -125,8 +125,13 @@ ofdl fetch instagram/someone               # name the app the creator is on
 ofdl fetch ig/someone --post-types reels   # short form, one post type
 ofdl fetch --source of                     # one app only
 ofdl subs --source of                      # the same filter, on subs
+ofdl fetch someone --log run.log           # full debug log to run.log
 ofdl --help                                # every command and option
 ```
+
+`--log FILE` writes every line at debug level to the file, including the request
+and response headers of each API call, whatever the screen shows. The file holds
+your live session cookies; do not share it.
 
 A name may carry the app the creator is on — `instagram/someone`, or
 `ig/someone` — and without one means `onlyfans`. The short forms are `of`, and
@@ -163,10 +168,10 @@ was interrupted or a download failed, because a hole deeper than three posts is
 passed over by the ordinary stop.
 
 Stories and highlights are not in date order, so the stop above does not apply
-to them. An Instagram highlight is skipped by date instead: the listing gives
-the date of the newest story in each highlight, and one holding nothing newer
-than the run asks for is never opened. OnlyFans highlights and the stories in
-both apps are read in full.
+to them. An Instagram highlight is skipped by date instead: Instagram gives the
+date of the newest story in each highlight, and one holding nothing newer than
+the run asks for is skipped. OnlyFans highlights and the stories in both apps
+are read in full.
 
 ## Apps and post types
 

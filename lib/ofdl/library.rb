@@ -57,8 +57,8 @@ module OFDL
     # The date of the newest file held for one creator's post type, or nil when
     # the directory holds none. A filename leads with the date its media was
     # posted (see Item#basename), so a listing answers this and no request is
-    # made. A listing that can name its rows' dates before fetching them uses
-    # it to skip the ones already held; see Sources::Instagram::Api#highlights.
+    # made. A listing that dates whole collections uses it to skip the ones
+    # already held; see Sources::Instagram::Api#highlights.
     def newest(source:, username:, post_type:)
       dir = @root.join(source.to_s, sanitise(username), post_type.to_s)
       @mutex.synchronize do

@@ -20,7 +20,11 @@ module OFDL
   # Overriding those would make the request internally inconsistent, which
   # fingerprints worse than not sending them at all.
   module Transport
-    Response = Data.define(:status, :content_type, :body) do
+    # `headers` has lowercased names; a repeated header's values are joined
+    # with ", ".
+    Response = Data.define(:status, :content_type, :body, :headers) do
+      def initialize(status:, content_type:, body:, headers: {}) = super
+
       def success? = (200..299).cover?(status)
     end
 
@@ -80,6 +84,20 @@ module OFDL
 
       def self.no_targets(binary)
         "#{binary} reports no chrome impersonation profiles -- is it really curl-impersonate?"
+      end
+
+      # curl writes one block per response it receives, separated by a blank
+      # line; an interim 1xx comes before the final one. Only the last block
+      # describes the response returned.
+      def self.parse_headers(dump)
+        block = dump.split(/\r?\n\r?\n/).reject { it.strip.empty? }.last.to_s
+        block.lines.drop(1).each_with_object({}) do |line, headers|
+          name, value = line.split(':', 2)
+          next unless value
+
+          key = name.strip.downcase
+          headers[key] = [headers[key], value.strip].compact.join(', ')
+        end
       end
 
       def available?
@@ -158,11 +176,14 @@ module OFDL
       # the status line `--write-out` prints.
       def perform(argv)
         Tempfile.create('ofdl-body') do |body|
-          out, err, status = run(argv + ['--output', body.path])
-          raise ApiError, "#{@binary} failed (#{status.exitstatus}): #{err.strip}" unless status.success?
+          Tempfile.create('ofdl-headers') do |dump|
+            out, err, status = run(argv + ['--output', body.path, '--dump-header', dump.path])
+            raise ApiError, "#{@binary} failed (#{status.exitstatus}): #{err.strip}" unless status.success?
 
-          code, content_type = out.strip.split(' ', 2)
-          Response.new(status: code.to_i, content_type:, body: File.read(body.path))
+            code, content_type = out.strip.split(' ', 2)
+            Response.new(status: code.to_i, content_type:, body: File.read(body.path),
+                         headers: self.class.parse_headers(File.read(dump.path)))
+          end
         end
       end
 
