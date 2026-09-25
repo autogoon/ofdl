@@ -6,8 +6,8 @@ module OFDL
       # Pagination over Instagram's private web API.
       #
       # The REST endpoints take the cookies and `x-ig-app-id` alone. The
-      # GraphQL ones -- #timeline, #reels, #media and #avatar -- need `fb_dtsg`
-      # as well; see Tokens.
+      # GraphQL ones -- #timeline, #reels, #media, #avatar and the tray in
+      # #highlights -- need `fb_dtsg` as well; see Tokens.
       #
       # A name is turned into an id once, by #user, because stories, highlights
       # and the profile picture are all keyed by the numeric id.
@@ -123,20 +123,43 @@ module OFDL
         # One request, no pagination: a story tray holds at most a day of media.
         def stories(user_id) = reel_items(user_id.to_s)
 
-        # The tray names the collections; each one's media is a second request.
-        #
-        # A tray entry carries `latest_reel_media`, the date of the newest story
-        # in that collection, so a collection holding nothing newer than `since`
-        # is skipped without the request. The tray is not in date order -- a
-        # creator arranges it -- so each entry is tested rather than the walk
-        # ended; see Session#cutoff_for for where the date comes from.
+        # The tray over GraphQL, because `/highlights/<id>/highlights_tray/`
+        # answers 302 to the site root. It names the collections and no dates.
+        HIGHLIGHTS_QUERY = { doc_id: '38168009559465141',
+                             name: 'ProfileStoryHighlightsTrayContentQuery_connection' }.freeze
+
+        # `/feed/reels_media/` answers 400 "Too many reels requested" to 28
+        # reel ids or more.
+        REELS_PER_REQUEST = 20
+
+        # Each tray page is one `reels_media` request for all of its
+        # collections. A reel there carries `latest_reel_media`, the date of
+        # its newest story, so a collection holding nothing newer than `since`
+        # yields nothing. The tray is not in date order -- a creator arranges
+        # it -- so each collection is tested rather than the walk ended; see
+        # Session#cutoff_for for where the date comes from.
         def highlights(user_id, since: nil)
           Enumerator.new do |yielder|
-            tray = @client.get("/highlights/#{user_id}/highlights_tray/")
-            Array(tray['tray']).each do |collection|
-              next if since && Time.at(collection['latest_reel_media'].to_i) < since
+            cursor = nil
+            loop do
+              variables = { user_id: user_id.to_s, first: REELS_PER_REQUEST }
+              variables[:after] = cursor if cursor
+              page = graphql(HIGHLIGHTS_QUERY, variables, label: 'highlights tray')
+              tray = page.dig('data', 'highlights') || {}
+              ids = Array(tray['edges']).filter_map { it.dig('node', 'id') }
+              break if ids.empty?
 
-              reel_items(collection['id']).each { yielder << it }
+              reels = @client.get('/feed/reels_media/', { reel_ids: ids.join(',') })['reels'] || {}
+              ids.each do |id|
+                reel = reels[id] or next
+                next if since && Time.at(reel['latest_reel_media'].to_i) < since
+
+                Array(reel['items']).each { yielder << it }
+              end
+
+              info = tray['page_info'] || {}
+              cursor = info['end_cursor']
+              break unless info['has_next_page'] && cursor
             end
           end
         end

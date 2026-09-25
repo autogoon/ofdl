@@ -211,40 +211,65 @@ module OFDL
         assert_empty(Instagram::Api.new(client:, tokens: FakeTokens.new).avatar(7))
       end
 
-      # Answers the highlights tray with the collections given, each dated by
-      # its newest story, and records which collections were then asked for.
+      # Answers the tray query one page at a time, and `reels_media` with each
+      # collection asked for, dated by its newest story.
       class FakeTrayClient
-        attr_reader :asked
+        attr_reader :asked, :forms
 
-        def initialize(tray) = (@tray = tray) && @asked = []
+        def initialize(pages, dates)
+          @pages = pages
+          @dates = dates
+          @asked = []
+          @forms = []
+        end
 
-        def get(path, params = {})
-          return { 'tray' => @tray.map { |id, at| { 'id' => id, 'latest_reel_media' => at } } } if path.include?('tray')
+        def post(_url, form, extra: {}, label: nil)
+          @forms << form
+          ids, cursor = @pages.shift
+          { 'data' => { 'highlights' => {
+            'edges' => ids.map { { 'node' => { 'id' => it } } },
+            'page_info' => { 'has_next_page' => !cursor.nil?, 'end_cursor' => cursor }
+          } } }
+        end
 
+        def get(_path, params = {})
           @asked << params[:reel_ids]
-          { 'reels' => { params[:reel_ids] => { 'items' => [{ 'pk' => params[:reel_ids] }] } } }
+          ids = params[:reel_ids].split(',')
+          { 'reels' => ids.to_h { [it, { 'latest_reel_media' => @dates[it], 'items' => [{ 'pk' => it }] }] } }
         end
       end
 
-      def tray_api(tray)
-        client = FakeTrayClient.new(tray)
+      def tray_api(pages, dates)
+        client = FakeTrayClient.new(pages, dates)
         [Instagram::Api.new(client:, tokens: FakeTokens.new), client]
       end
 
-      def test_a_collection_with_nothing_newer_than_since_costs_no_request
-        api, client = tray_api([['a', 1_760_000_000], ['b', 1_700_000_000], ['c', 1_770_000_000]])
+      def test_one_request_carries_every_collection_on_a_tray_page
+        api, client = tray_api([[%w[a b c]]], {})
 
-        api.highlights(7, since: Time.at(1_750_000_000)).to_a
-
-        assert_equal(%w[a c], client.asked)
+        assert_equal(%w[a b c], api.highlights(7).map { it['pk'] })
+        assert_equal(['a,b,c'], client.asked)
       end
 
-      def test_every_collection_is_asked_for_without_a_date
-        api, client = tray_api([['a', 1_760_000_000], ['b', 1_700_000_000]])
+      def test_a_collection_with_nothing_newer_than_since_yields_nothing
+        api, = tray_api([[%w[a b c]]], { 'a' => 1_760_000_000, 'b' => 1_700_000_000, 'c' => 1_770_000_000 })
 
+        assert_equal(%w[a c], api.highlights(7, since: Time.at(1_750_000_000)).map { it['pk'] })
+      end
+
+      def test_the_tray_cursor_carries_to_the_next_page
+        api, client = tray_api([[%w[a], 'next'], [%w[b]]], {})
+
+        assert_equal(%w[a b], api.highlights(7).map { it['pk'] })
+        assert_equal(%w[a b], client.asked)
+        assert_equal('next', JSON.parse(client.forms.last[:variables])['after'])
+      end
+
+      def test_a_tray_page_fits_in_one_reels_media_request
+        api, client = tray_api([[%w[a]]], {})
         api.highlights(7).to_a
 
-        assert_equal(%w[a b], client.asked)
+        assert_equal(Instagram::Api::REELS_PER_REQUEST, JSON.parse(client.forms.first[:variables])['first'])
       end
     end
   end

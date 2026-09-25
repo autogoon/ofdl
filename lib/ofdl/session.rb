@@ -223,10 +223,9 @@ module OFDL
     end
 
     # The date below which a listing need not be read at all, per post type,
-    # for a listing that names its rows' dates before they are fetched: an
-    # Instagram highlight tray gives each collection's newest story, so a
-    # collection below the cutoff costs no request at all rather than being
-    # counted by #count_idle a request later.
+    # for a listing that dates whole collections: Instagram gives each
+    # highlight's newest story, so a highlight below the cutoff yields no rows
+    # rather than being counted by #count_idle.
     #
     # `--since` sets it to the date asked for. With no date it is the newest
     # file already held for that post type, which is the point #count_idle
