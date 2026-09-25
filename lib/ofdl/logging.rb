@@ -6,10 +6,13 @@ module OFDL
   class Logging
     LEVELS = %i[debug info warn error].freeze
 
-    def initialize(io: $stderr, level: :info, colour: nil)
+    # `file` receives every level, whatever `level` is, and is not affected by
+    # the dashboard: its message zone shows the first line of each entry only.
+    def initialize(io: $stderr, level: :info, colour: nil, file: nil)
       @io = io
       @level = level
       @colour = colour.nil? ? io.tty? : colour
+      @file = file
       @mutex = Mutex.new
       @sink = nil
     end
@@ -20,17 +23,20 @@ module OFDL
 
     LEVELS.each_with_index do |name, index|
       define_method(name) do |message = nil, &block|
-        return if index < LEVELS.index(@level)
+        shown = index >= LEVELS.index(@level)
+        return unless shown || @file
 
-        write(name, message || block&.call)
+        text = message || block&.call
+        record(name, text)
+        write(name, text) if shown
       end
     end
 
     # The /api2/v2 prefix is on every path and carries no information.
     def request(path)
-      return if LEVELS.index(:info) < LEVELS.index(@level)
-
-      write(:request, "  → #{path.delete_prefix('/api2/v2')}")
+      line = "  → #{path.delete_prefix('/api2/v2')}"
+      record(:request, line)
+      write(:request, line) unless LEVELS.index(:info) < LEVELS.index(@level)
     end
 
     def step(message) = info("\n#{message}")
@@ -63,6 +69,13 @@ module OFDL
 
     UNLABELLED = %i[info request].freeze
     private_constant :UNLABELLED
+
+    def record(level, message)
+      return unless @file
+
+      stamp = Time.now.strftime('%H:%M:%S.%L')
+      @mutex.synchronize { @file.puts("#{stamp} #{level}: #{message}") }
+    end
 
     def write(level, message)
       line = if @colour

@@ -19,6 +19,22 @@ module OFDL
       assert(global[:verbose])
     end
 
+    def test_log_after_the_subcommand_in_either_form
+      rest, global = absorb(['alice', '--log', 'run.log'])
+
+      assert_equal(['alice'], rest)
+      assert_equal('run.log', global[:log])
+
+      rest, global = absorb(['--log=run.log', 'alice'])
+
+      assert_equal(['alice'], rest)
+      assert_equal('run.log', global[:log])
+    end
+
+    def test_log_without_a_file_is_an_error
+      assert_raises(ConfigError) { absorb(['alice', '--log']) }
+    end
+
     def test_leaves_subcommand_options_alone
       rest, global = absorb(['--post-types', 'posts', '--since', '2026-01-01'])
 

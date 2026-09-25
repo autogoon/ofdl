@@ -125,8 +125,13 @@ ofdl fetch instagram/someone               # name the app the creator is on
 ofdl fetch ig/someone --post-types reels   # short form, one post type
 ofdl fetch --source of                     # one app only
 ofdl subs --source of                      # the same filter, on subs
+ofdl fetch someone --log run.log           # full debug log to run.log
 ofdl --help                                # every command and option
 ```
+
+`--log FILE` writes every line at debug level to the file, including the request
+and response headers of each API call, whatever the screen shows. The file holds
+your live session cookies; do not share it.
 
 A name may carry the app the creator is on — `instagram/someone`, or
 `ig/someone` — and without one means `onlyfans`. The short forms are `of`, and

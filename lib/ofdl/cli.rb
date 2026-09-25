@@ -30,10 +30,11 @@ module OFDL
       absorb_trailing_globals!(argv, global)
       return usage(parser) if global[:help]
 
-      @log = Logging.new(level: global[:verbose] ? :debug : :info)
+      @log = Logging.new(level: global[:verbose] ? :debug : :info, file: log_file(global[:log]))
       # Verbose output contains the live session verbatim so it can be compared
       # against the browser.
       @log.warn('verbose: output includes live session cookies -- do not paste it publicly') if global[:verbose]
+      @log.warn("#{global[:log]}: includes live session cookies -- do not paste it publicly") if global[:log]
       @config = Config.discover
       # Safe: `command` is checked against COMMANDS above, so this can only ever
       # reach one of the handlers below.
@@ -71,6 +72,7 @@ module OFDL
         o.separator('')
         o.separator('global options:')
         o.on('-v', '--verbose', 'debug logging') { options[:verbose] = true }
+        o.on('--log FILE', 'write the debug log to FILE') { options[:log] = it }
         o.on('--version', 'print version') do
           puts(OFDL::VERSION)
           exit(0)
@@ -168,6 +170,26 @@ module OFDL
     def absorb_trailing_globals!(argv, global)
       argv.delete_if { |arg| %w[-v --verbose].include?(arg) && (global[:verbose] = true) }
       argv.delete_if { |arg| %w[-h --help].include?(arg) && (global[:help] = true) }
+      absorb_log!(argv, global)
+    end
+
+    # Both `--log FILE` and `--log=FILE`.
+    def absorb_log!(argv, global)
+      if (index = argv.index('--log'))
+        global[:log] = argv.delete_at(index + 1) or raise ConfigError, '--log needs a file name'
+        argv.delete_at(index)
+      end
+      argv.delete_if { |arg| arg.start_with?('--log=') && (global[:log] = arg.delete_prefix('--log=')) }
+    end
+
+    # Open for the whole run, and written through as each line is logged, so
+    # the file is complete up to an interrupt.
+    def log_file(path)
+      return unless path
+
+      File.new(path, 'w').tap { it.sync = true }
+    rescue SystemCallError => e
+      raise ConfigError, "--log: #{e.message}"
     end
 
     def usage(parser)
