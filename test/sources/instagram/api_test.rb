@@ -211,20 +211,29 @@ module OFDL
         assert_empty(Instagram::Api.new(client:, tokens: FakeTokens.new).avatar(7))
       end
 
-      # Answers the tray query one page at a time, and `reels_media` with each
-      # collection asked for, dated by its newest story.
+      # Answers the tray query one page at a time, and the reels media query
+      # with each reel asked for, dated by its newest story.
       class FakeTrayClient
-        attr_reader :asked, :forms
+        attr_reader :asked, :tray_forms, :reels_media_variables
 
         def initialize(pages, dates)
           @pages = pages
           @dates = dates
           @asked = []
-          @forms = []
+          @tray_forms = []
+          @reels_media_variables = []
         end
 
         def post(_url, form, extra: {}, label: nil)
-          @forms << form
+          return tray_page(form) if form[:doc_id] == Instagram::Api::HIGHLIGHTS_QUERY[:doc_id]
+
+          reels_media_page(JSON.parse(form[:variables]))
+        end
+
+        private
+
+        def tray_page(form)
+          @tray_forms << form
           ids, cursor = @pages.shift
           { 'data' => { 'highlights' => {
             'edges' => ids.map { { 'node' => { 'id' => it } } },
@@ -232,10 +241,13 @@ module OFDL
           } } }
         end
 
-        def get(_path, params = {})
-          @asked << params[:reel_ids]
-          ids = params[:reel_ids].split(',')
-          { 'reels' => ids.to_h { [it, { 'latest_reel_media' => @dates[it], 'items' => [{ 'pk' => it }] }] } }
+        def reels_media_page(variables)
+          @reels_media_variables << variables
+          @asked << variables['reel_ids']
+          nodes = variables['reel_ids'].map do |id|
+            { 'node' => { 'id' => id, 'latest_reel_media' => @dates[id], 'items' => [{ 'pk' => id }] } }
+          end
+          { 'data' => { 'xdt_api__v1__feed__reels_media__connection' => { 'edges' => nodes } } }
         end
       end
 
@@ -244,11 +256,37 @@ module OFDL
         [Instagram::Api.new(client:, tokens: FakeTokens.new), client]
       end
 
-      def test_one_request_carries_every_collection_on_a_tray_page
+      def test_one_request_carries_every_collection_on_a_short_tray_page
         api, client = tray_api([[%w[a b c]]], {})
 
         assert_equal(%w[a b c], api.highlights(7).map { it['pk'] })
-        assert_equal(['a,b,c'], client.asked)
+        assert_equal([%w[a b c]], client.asked)
+      end
+
+      def test_a_tray_page_is_split_into_requests_the_query_answers_in_full
+        ids = (1..12).map(&:to_s)
+        api, client = tray_api([[ids]], {})
+
+        assert_equal(ids, api.highlights(7).map { it['pk'] })
+        assert_equal([ids.first(10), ids.last(2)], client.asked)
+      end
+
+      def test_stories_name_the_account_as_the_only_reel
+        api, client = tray_api([], {})
+
+        assert_equal(%w[7], api.stories(7).map { it['pk'] })
+        assert_equal([%w[7]], client.asked)
+      end
+
+      def test_the_reels_media_query_carries_the_variables_it_refuses_to_run_without
+        api, client = tray_api([], {})
+        api.stories(7)
+
+        variables = client.reels_media_variables.first
+
+        assert_equal('7', variables['initial_reel_id'])
+        assert_equal(1, variables['first'])
+        assert(variables['__relay_internal__pv__PolarisCommunityNoteStoriesLabelEnabledrelayprovider'])
       end
 
       def test_a_collection_with_nothing_newer_than_since_yields_nothing
@@ -261,15 +299,8 @@ module OFDL
         api, client = tray_api([[%w[a], 'next'], [%w[b]]], {})
 
         assert_equal(%w[a b], api.highlights(7).map { it['pk'] })
-        assert_equal(%w[a b], client.asked)
-        assert_equal('next', JSON.parse(client.forms.last[:variables])['after'])
-      end
-
-      def test_a_tray_page_fits_in_one_reels_media_request
-        api, client = tray_api([[%w[a]]], {})
-        api.highlights(7).to_a
-
-        assert_equal(Instagram::Api::REELS_PER_REQUEST, JSON.parse(client.forms.first[:variables])['first'])
+        assert_equal([%w[a], %w[b]], client.asked)
+        assert_equal('next', JSON.parse(client.tray_forms.last[:variables])['after'])
       end
     end
   end

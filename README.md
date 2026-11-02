@@ -417,8 +417,8 @@ These are the network calls ofdl makes:
 | `onlyfans.com/api2/v2`      | your OnlyFans cookies                   | listing posts, messages, stories   |
 | `onlyfans.com/`             | nothing — no cookies                    | the build revision for `x-of-rev`  |
 | `cdn2.onlyfans.com/hash`    | your `auth_id` in the query, no cookies | the value of `x-hash`              |
-| `instagram.com/api/v1`      | your Instagram cookies                  | listing the grid, stories, reels   |
-| `instagram.com/api/graphql` | your Instagram cookies                  | listing the reels tab              |
+| `instagram.com/api/v1`      | your Instagram cookies                  | listing the grid, reels            |
+| `instagram.com/api/graphql` | your Instagram cookies                  | listing the reels tab, stories     |
 | `instagram.com/`            | your Instagram cookies                  | the page token the reels tab needs |
 | media URLs                  | nothing — no cookies, no headers        | the actual files                   |
 | `rules_url`                 | nothing — plain GET                     | current API signing parameters     |
