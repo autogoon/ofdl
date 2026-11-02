@@ -100,20 +100,21 @@ together part way down a feed, everything older goes unread until a run under
 
 Stories and highlights are in neither list, because the position of a collection
 in a tray does not order the dates of the stories inside it. A story tray is one
-request; a highlight tray is one request per collection. Where the tray dates a
-collection before it is fetched, that collection's request is skipped:
-`Sources::Instagram::Api#highlights` tests `latest_reel_media` against the date
-`Session#cutoff_for` gives it. OnlyFans' highlights carry `createdAt`, the date
-the collection was made rather than the date of its newest story, so a
-collection there is fetched whatever its stories' dates.
+request. An Instagram highlight tray names no dates, so
+`Sources::Instagram::Api#highlights` requests its collections ten at a time and
+tests each one's `latest_reel_media` against the date `Session#cutoff_for` gives
+it. OnlyFans' highlights carry `createdAt`, the date the collection was made
+rather than the date of its newest story, so a collection there is fetched
+whatever its stories' dates, at one request per collection.
 
 ### Instagram
 
 The follow list and the follow status are REST endpoints, which need the cookies
 and `x-ig-app-id` and nothing else. Instagram serves the grid, reels, stories,
 highlights and the avatar only over GraphQL: a `doc_id`, and `fb_dtsg`, which is
-minted into every HTML page the site serves. `Sources::Instagram::Tokens` scrapes
-`fb_dtsg` once per run, the way `SiteState` reads `x-of-rev` for OnlyFans.
+minted into every HTML page the site serves. `Sources::Instagram::Tokens`
+scrapes `fb_dtsg` once per run, the way `SiteState` reads `x-of-rev` for
+OnlyFans.
 
 The grid and the reels tab are separate listings, and an account's reels need
 not appear in its grid, so `posts` walks one and `reels` the other. A reel in
