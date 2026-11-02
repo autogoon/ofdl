@@ -65,8 +65,8 @@ module OFDL
       end
     end
 
-    # A form POST to a fixed URL, for the one Instagram listing with no REST
-    # endpoint. `form` is a hash; the caller decides what goes in it, including
+    # A form POST to a fixed URL, for Instagram's GraphQL queries. `form` is a
+    # hash; the caller decides what goes in it, including
     # whatever per-page-load token the endpoint requires.
     #
     # `label` is what the request log shows. A GET's path carries its query

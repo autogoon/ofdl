@@ -109,10 +109,10 @@ collection there is fetched whatever its stories' dates.
 
 ### Instagram
 
-Most endpoints are the REST ones the web client calls, and they need the cookies
-and `x-ig-app-id` and nothing else. The exception is the reels tab, which
-Instagram serves only over GraphQL: a `doc_id`, and `fb_dtsg`, which is minted
-into every HTML page the site serves. `Sources::Instagram::Tokens` scrapes
+The follow list and the follow status are REST endpoints, which need the cookies
+and `x-ig-app-id` and nothing else. Instagram serves the grid, reels, stories,
+highlights and the avatar only over GraphQL: a `doc_id`, and `fb_dtsg`, which is
+minted into every HTML page the site serves. `Sources::Instagram::Tokens` scrapes
 `fb_dtsg` once per run, the way `SiteState` reads `x-of-rev` for OnlyFans.
 
 The grid and the reels tab are separate listings, and an account's reels need

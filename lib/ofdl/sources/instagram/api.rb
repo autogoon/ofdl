@@ -75,9 +75,8 @@ module OFDL
         # The reels tab, which is not the timeline: an account's reels need not
         # appear in the grid #timeline reads.
         #
-        # The reels tab is GraphQL, because Instagram serves no REST endpoint
-        # for it; every other endpoint here is REST. What the query leaves out,
-        # and what that costs, is at Sources::Instagram#walk_reels.
+        # What the query leaves out, and what that costs, is at
+        # Sources::Instagram#walk_reels.
         REELS_QUERY = { doc_id: '28096073060084187', name: 'PolarisProfileReelsTabContentQuery' }.freeze
 
         def reels(user_id)
