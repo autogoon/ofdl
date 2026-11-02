@@ -6,8 +6,8 @@ module OFDL
       # Pagination over Instagram's private web API.
       #
       # The REST endpoints take the cookies and `x-ig-app-id` alone. The
-      # GraphQL ones -- #timeline, #reels, #media, #avatar and the tray in
-      # #highlights -- need `fb_dtsg` as well; see Tokens.
+      # GraphQL ones -- #timeline, #reels, #media, #stories, #highlights and
+      # #avatar -- need `fb_dtsg` as well; see Tokens.
       #
       # A name is turned into an id once, by #user, because stories, highlights
       # and the profile picture are all keyed by the numeric id.
@@ -75,9 +75,8 @@ module OFDL
         # The reels tab, which is not the timeline: an account's reels need not
         # appear in the grid #timeline reads.
         #
-        # The reels tab is GraphQL, because Instagram serves no REST endpoint
-        # for it; every other endpoint here is REST. What the query leaves out,
-        # and what that costs, is at Sources::Instagram#walk_reels.
+        # What the query leaves out, and what that costs, is at
+        # Sources::Instagram#walk_reels.
         REELS_QUERY = { doc_id: '28096073060084187', name: 'PolarisProfileReelsTabContentQuery' }.freeze
 
         def reels(user_id)
@@ -120,41 +119,47 @@ module OFDL
           page.dig('data', 'xdt_api__v1__media__shortcode__web_info', 'items')&.first
         end
 
+        # The query behind both story trays, because `/feed/reels_media/` answers
+        # 500 to every request. `reel_ids` holds user ids for stories and
+        # `highlight:<id>` ids for highlights.
+        REELS_MEDIA_QUERY = { doc_id: '29299425373007309', name: 'PolarisStoriesV3HighlightsPageQuery' }.freeze
+
+        # The query answers at most 10 reels whatever `first` says. Its cursor
+        # repeats reels from the page before, so the ids are split rather than paged.
+        REELS_PER_REQUEST = 10
+
         # One request, no pagination: a story tray holds at most a day of media.
-        def stories(user_id) = reel_items(user_id.to_s)
+        def stories(user_id) = reels_media([user_id.to_s]).flat_map { Array(it['items']) }
 
         # The tray over GraphQL, because `/highlights/<id>/highlights_tray/`
         # answers 302 to the site root. It names the collections and no dates.
         HIGHLIGHTS_QUERY = { doc_id: '38168009559465141',
                              name: 'ProfileStoryHighlightsTrayContentQuery_connection' }.freeze
 
-        # `/feed/reels_media/` answers 400 "Too many reels requested" to 28
-        # reel ids or more.
-        REELS_PER_REQUEST = 20
+        HIGHLIGHTS_PER_TRAY_PAGE = 20
 
-        # Each tray page is one `reels_media` request for all of its
-        # collections. A reel there carries `latest_reel_media`, the date of
-        # its newest story, so a collection holding nothing newer than `since`
-        # yields nothing. The tray is not in date order -- a creator arranges
-        # it -- so each collection is tested rather than the walk ended; see
-        # Session#cutoff_for for where the date comes from.
+        # A reel carries `latest_reel_media`, the date of its newest story, so a
+        # collection holding nothing newer than `since` yields nothing. The tray
+        # is not in date order -- a creator arranges it -- so each collection is
+        # tested rather than the walk ended; see Session#cutoff_for for where
+        # the date comes from.
         def highlights(user_id, since: nil)
           Enumerator.new do |yielder|
             cursor = nil
             loop do
-              variables = { user_id: user_id.to_s, first: REELS_PER_REQUEST }
+              variables = { user_id: user_id.to_s, first: HIGHLIGHTS_PER_TRAY_PAGE }
               variables[:after] = cursor if cursor
               page = graphql(HIGHLIGHTS_QUERY, variables, label: 'highlights tray')
               tray = page.dig('data', 'highlights') || {}
               ids = Array(tray['edges']).filter_map { it.dig('node', 'id') }
               break if ids.empty?
 
-              reels = @client.get('/feed/reels_media/', { reel_ids: ids.join(',') })['reels'] || {}
-              ids.each do |id|
-                reel = reels[id] or next
-                next if since && Time.at(reel['latest_reel_media'].to_i) < since
+              ids.each_slice(REELS_PER_REQUEST) do |reel_ids|
+                reels_media(reel_ids).each do |reel|
+                  next if since && Time.at(reel['latest_reel_media'].to_i) < since
 
-                Array(reel['items']).each { yielder << it }
+                  Array(reel['items']).each { yielder << it }
+                end
               end
 
               info = tray['page_info'] || {}
@@ -239,9 +244,16 @@ module OFDL
           )
         end
 
-        def reel_items(reel_id)
-          page = @client.get('/feed/reels_media/', { reel_ids: reel_id })
-          Array(page.dig('reels', reel_id, 'items'))
+        # The query answers no reels without `initial_reel_id`, and no items
+        # without the provider flag; both come back as missing_required_variable_value.
+        def reels_media(reel_ids)
+          variables = {
+            first: reel_ids.size, initial_reel_id: reel_ids.first, reel_ids:,
+            __relay_internal__pv__PolarisCommunityNoteStoriesLabelEnabledrelayprovider: true
+          }
+          page = graphql(REELS_MEDIA_QUERY, variables, label: "reels media #{reel_ids.first}")
+          edges = page.dig('data', 'xdt_api__v1__feed__reels_media__connection', 'edges')
+          Array(edges).filter_map { it['node'] }
         end
 
         def exhausted?(rows, since)

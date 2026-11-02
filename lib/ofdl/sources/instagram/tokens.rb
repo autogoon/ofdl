@@ -9,9 +9,9 @@ module OFDL
       #
       #   ["DTSGInitialData",[],{"token":"..."},<n>]
       #
-      # and rejected requests come back as {"error":1357004}. Only the reels
-      # listing needs it; every other endpoint this source uses is REST and
-      # takes the cookies and `x-ig-app-id` alone.
+      # and rejected requests come back as {"error":1357004}. Every GraphQL query
+      # in Api needs it; the REST endpoints take the cookies and `x-ig-app-id`
+      # alone.
       #
       # Fetched once per run, through the same transport as everything else, so
       # the page is requested with the TLS fingerprint and headers the rest of
